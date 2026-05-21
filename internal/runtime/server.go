@@ -10,6 +10,7 @@ import (
 	"github.com/vercel-labs/emulate/internal/core/ui"
 	"github.com/vercel-labs/emulate/internal/services/apple"
 	"github.com/vercel-labs/emulate/internal/services/aws"
+	"github.com/vercel-labs/emulate/internal/services/clerk"
 	"github.com/vercel-labs/emulate/internal/services/github"
 	"github.com/vercel-labs/emulate/internal/services/google"
 	"github.com/vercel-labs/emulate/internal/services/microsoft"
@@ -29,6 +30,7 @@ type ServerOptions struct {
 	Store         *store.Store
 	AssetStore    *coreassets.Store
 	AppleSeed     *apple.SeedConfig
+	ClerkSeed     *clerk.SeedConfig
 	GitHubSeed    *github.SeedConfig
 	GoogleSeed    *google.SeedConfig
 	MicrosoftSeed *microsoft.SeedConfig
@@ -89,12 +91,17 @@ func NewServer(options ServerOptions) *Server {
 		})
 	})
 	ambiguousOIDCServices := enabledRootOIDCServices(services)
-	if len(ambiguousOIDCServices) > 1 {
+	clerkNeedsOAuthPrefix := serviceEnabled(services, "clerk") && serviceEnabled(services, "vercel")
+	if len(ambiguousOIDCServices) > 1 || clerkNeedsOAuthPrefix {
 		router.Get("/.well-known/openid-configuration", func(c *corehttp.Context) {
+			paths := oidcDiscoveryPaths(ambiguousOIDCServices)
+			if clerkNeedsOAuthPrefix {
+				paths["clerk"] = "/clerk/.well-known/openid-configuration"
+			}
 			c.JSON(http.StatusBadRequest, map[string]any{
-				"message":  "Multiple enabled services serve OIDC discovery at /.well-known/openid-configuration. Use a service specific discovery path.",
+				"message":  "Root OIDC discovery is ambiguous for the enabled services. Use a service specific discovery path.",
 				"services": ambiguousOIDCServices,
-				"paths":    oidcDiscoveryPaths(ambiguousOIDCServices),
+				"paths":    paths,
 			})
 		})
 	}
@@ -201,6 +208,21 @@ func NewServer(options ServerOptions) *Server {
 			router.Mount("/okta", prefixed)
 		}
 	}
+	if serviceEnabled(services, "clerk") {
+		clerk.Register(router, clerk.Options{
+			Store:   runtimeStore,
+			BaseURL: options.BaseURL,
+			Seed:    options.ClerkSeed,
+		})
+		if len(ambiguousOIDCServices) > 1 || clerkNeedsOAuthPrefix {
+			prefixed := corehttp.NewRouter()
+			clerk.Register(prefixed, clerk.Options{
+				Store:   runtimeStore,
+				BaseURL: servicePrefixedBaseURL(options.BaseURL, "clerk"),
+			})
+			router.Mount("/clerk", prefixed)
+		}
+	}
 	router.NotFound(func(c *corehttp.Context) {
 		c.JSON(http.StatusNotFound, map[string]any{"message": "Not Found"})
 	})
@@ -226,7 +248,7 @@ func serviceEnabled(services []string, name string) bool {
 
 func enabledRootOIDCServices(services []string) []string {
 	names := []string{}
-	for _, name := range []string{"apple", "google", "microsoft", "okta"} {
+	for _, name := range []string{"apple", "google", "microsoft", "okta", "clerk"} {
 		if serviceEnabled(services, name) {
 			names = append(names, name)
 		}

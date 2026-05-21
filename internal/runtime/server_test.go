@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -360,9 +361,24 @@ func TestNewHandlerMountsOktaWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestNewHandlerMountsClerkWhenEnabled(t *testing.T) {
+	handler := NewHandler(ServerOptions{Services: []string{"clerk"}, BaseURL: "http://localhost:4017"})
+
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil))
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"issuer":"http://localhost:4017"`) ||
+		!strings.Contains(res.Body.String(), `"jwks_uri":"http://localhost:4017/v1/jwks"`) {
+		t.Fatalf("unexpected body: %s", res.Body.String())
+	}
+}
+
 func TestNewHandlerMultiServiceOIDCDiscoveryUsesServicePrefixes(t *testing.T) {
 	handler := NewHandler(ServerOptions{
-		Services: []string{"apple", "google", "microsoft", "okta"},
+		Services: []string{"apple", "google", "microsoft", "okta", "clerk"},
 		BaseURL:  "http://localhost:4010",
 	})
 
@@ -383,6 +399,7 @@ func TestNewHandlerMultiServiceOIDCDiscoveryUsesServicePrefixes(t *testing.T) {
 		{path: "/apple/.well-known/openid-configuration", want: `"issuer":"http://localhost:4010/apple"`},
 		{path: "/microsoft/.well-known/openid-configuration", want: `"issuer":"http://localhost:4010/microsoft/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0"`},
 		{path: "/okta/oauth2/default/.well-known/openid-configuration", want: `"issuer":"http://localhost:4010/okta/oauth2/default"`},
+		{path: "/clerk/.well-known/openid-configuration", want: `"issuer":"http://localhost:4010/clerk"`},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			res := httptest.NewRecorder()
@@ -397,11 +414,58 @@ func TestNewHandlerMultiServiceOIDCDiscoveryUsesServicePrefixes(t *testing.T) {
 	}
 }
 
+func TestNewHandlerPrefixesClerkOIDCWhenVercelIsEnabled(t *testing.T) {
+	handler := NewHandler(ServerOptions{
+		Services: []string{"vercel", "clerk"},
+		BaseURL:  "http://localhost:4010",
+	})
+
+	rootDiscovery := httptest.NewRecorder()
+	handler.ServeHTTP(rootDiscovery, httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil))
+	if rootDiscovery.Code != http.StatusBadRequest {
+		t.Fatalf("root discovery status = %d, body = %s", rootDiscovery.Code, rootDiscovery.Body.String())
+	}
+	if !strings.Contains(rootDiscovery.Body.String(), "/clerk/.well-known/openid-configuration") {
+		t.Fatalf("unexpected root discovery body: %s", rootDiscovery.Body.String())
+	}
+
+	discovery := httptest.NewRecorder()
+	handler.ServeHTTP(discovery, httptest.NewRequest(http.MethodGet, "/clerk/.well-known/openid-configuration", nil))
+	if discovery.Code != http.StatusOK {
+		t.Fatalf("prefixed discovery status = %d, body = %s", discovery.Code, discovery.Body.String())
+	}
+	if !strings.Contains(discovery.Body.String(), `"issuer":"http://localhost:4010/clerk"`) ||
+		!strings.Contains(discovery.Body.String(), `"authorization_endpoint":"http://localhost:4010/clerk/oauth/authorize"`) {
+		t.Fatalf("unexpected prefixed discovery body: %s", discovery.Body.String())
+	}
+
+	authorizePath := "/clerk/oauth/authorize?client_id=clerk_emulate_client&response_type=code&redirect_uri=" + url.QueryEscape("http://localhost:3000/api/auth/callback/clerk")
+	authorize := httptest.NewRecorder()
+	handler.ServeHTTP(authorize, httptest.NewRequest(http.MethodGet, authorizePath, nil))
+	if authorize.Code != http.StatusOK {
+		t.Fatalf("authorize status = %d, body = %s", authorize.Code, authorize.Body.String())
+	}
+	if !strings.Contains(authorize.Body.String(), `action="/clerk/oauth/authorize/callback"`) {
+		t.Fatalf("authorize form did not use prefixed callback: %s", authorize.Body.String())
+	}
+}
+
 func TestNewHandlerDoesNotMountOktaWhenDisabled(t *testing.T) {
 	handler := NewHandler(ServerOptions{Services: []string{"resend"}})
 
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/oauth2/default/v1/keys", nil))
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+}
+
+func TestNewHandlerDoesNotMountClerkWhenDisabled(t *testing.T) {
+	handler := NewHandler(ServerOptions{Services: []string{"resend"}})
+
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/v1/jwks", nil))
 
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
