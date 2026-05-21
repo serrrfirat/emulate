@@ -198,6 +198,83 @@ func TestNewHandlerDoesNotMountResendWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestNewHandlerMountsSlackWhenEnabled(t *testing.T) {
+	handler := NewHandler(ServerOptions{Services: []string{"slack"}})
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth.test", nil)
+	req.Header.Set("Authorization", "Bearer xoxb-test-token")
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"team":"Emulate"`) || !strings.Contains(res.Body.String(), `"user_id":"U000000001"`) {
+		t.Fatalf("unexpected body: %s", res.Body.String())
+	}
+}
+
+func TestNewHandlerDoesNotMountSlackWhenDisabled(t *testing.T) {
+	handler := NewHandler(ServerOptions{Services: []string{"resend"}})
+
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/api/auth.test", nil))
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+}
+
+func TestNewHandlerSlackDoesNotShadowAWSRootListBuckets(t *testing.T) {
+	handler := NewHandler(ServerOptions{Services: []string{"aws", "slack"}})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/20260519/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=abcdef")
+	req.Header.Set("X-Amz-Date", "20260519T000000Z")
+
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if got := res.Header().Get("Content-Type"); got != "application/xml" {
+		t.Fatalf("content type = %q, body = %s", got, res.Body.String())
+	}
+	body := res.Body.String()
+	if !strings.Contains(body, "<ListAllMyBucketsResult>") || strings.Contains(body, "Slack Inspector") {
+		t.Fatalf("unexpected body: %s", body)
+	}
+}
+
+func TestNewHandlerMultiServiceSlackServesInspectorAtSlackPath(t *testing.T) {
+	handler := NewHandler(ServerOptions{Services: []string{"aws", "slack"}})
+
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/slack", nil))
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	if !strings.Contains(body, "Message Inspector") || !strings.Contains(body, `href="/slack?channel=`) {
+		t.Fatalf("unexpected body: %s", body)
+	}
+}
+
+func TestNewHandlerSlackOnlyServesRootInspector(t *testing.T) {
+	handler := NewHandler(ServerOptions{Services: []string{"slack"}})
+
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "Message Inspector") {
+		t.Fatalf("unexpected body: %s", res.Body.String())
+	}
+}
+
 func TestNewHandlerMountsAppleWhenEnabled(t *testing.T) {
 	handler := NewHandler(ServerOptions{Services: []string{"apple"}, BaseURL: "http://localhost:4014"})
 

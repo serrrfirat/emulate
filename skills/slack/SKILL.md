@@ -6,7 +6,9 @@ allowed-tools: Bash(npx emulate:*), Bash(curl:*)
 
 # Slack API Emulator
 
-Fully stateful Slack Web API emulation with channels, messages, threads, reactions, OAuth v2, and incoming webhooks. State changes dispatch `event_callback` payloads to configured webhook URLs.
+Fully stateful Slack Web API emulation with channels, messages, threads, reactions, OAuth v2, and incoming webhooks. In embedded JavaScript mode, state changes also dispatch `event_callback` payloads to configured webhook URLs.
+
+The native Go runtime implements this Slack Web API, OAuth v2, incoming webhook, seed config, and message inspector foundation for local CLI runs and Vercel Go Function previews. It stores message and reaction state but does not deliver outbound Slack Events API callbacks yet. In native CLI runs with multiple services enabled, open `/slack` for the message inspector. When only Slack is enabled, and in Vercel Go Function previews, the inspector is available at the service root. Use `npx emulate vercel init --service slack` for zero infra Vercel preview deployments at `/emulate/slack/*`.
 
 ## Start
 
@@ -33,10 +35,10 @@ Pass tokens as `Authorization: Bearer <token>`. All Web API endpoints require au
 
 ```bash
 curl -X POST http://localhost:4003/api/auth.test \
-  -H "Authorization: Bearer test_token_admin"
+  -H "Authorization: Bearer xoxb-test-token"
 ```
 
-When no token is provided, requests fall back to the first seeded user.
+The native Go runtime seeds `xoxb-test-token` for the default admin user. OAuth token exchange also issues `xoxb-*` tokens.
 
 ## Pointing Your App at the Emulator
 
@@ -305,7 +307,7 @@ Returns a Slack-style response:
   "ok": true,
   "access_token": "xoxb-...",
   "token_type": "bot",
-  "bot_user_id": "B000000001",
+  "bot_user_id": "U000000001",
   "team": { "id": "T000000001", "name": "Emulate" },
   "authed_user": { "id": "U000000001" }
 }
@@ -313,7 +315,7 @@ Returns a Slack-style response:
 
 ## Event Dispatching
 
-When messages are posted or reactions are added/removed, the emulator dispatches `event_callback` payloads to configured webhook URLs. These payloads match Slack's Events API format:
+In embedded JavaScript mode, when messages are posted or reactions are added/removed, the emulator dispatches `event_callback` payloads to configured webhook URLs. These payloads match Slack's Events API format:
 
 - `message` events on `chat.postMessage`, `chat.update`, `chat.delete`
 - `reaction_added` / `reaction_removed` events on `reactions.add` / `reactions.remove`
@@ -324,7 +326,7 @@ When messages are posted or reactions are added/removed, the emulator dispatches
 ### Post Messages and React
 
 ```bash
-TOKEN="test_token_admin"
+TOKEN="xoxb-test-token"
 BASE="http://localhost:4003"
 
 # Post a message
