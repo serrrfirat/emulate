@@ -8,6 +8,26 @@ import {
   type SlackTestApp,
 } from "./helpers.js";
 
+function insertSlackTestUser(store: Store, userId: string, name: string) {
+  return getSlackStore(store).users.insert({
+    user_id: userId,
+    team_id: "T000000001",
+    name,
+    real_name: name,
+    email: `${name}@emulate.dev`,
+    is_admin: false,
+    is_bot: false,
+    deleted: false,
+    profile: {
+      display_name: name,
+      real_name: name,
+      email: `${name}@emulate.dev`,
+      image_48: "",
+      image_192: "",
+    },
+  });
+}
+
 describe("Slack plugin - auth.test", () => {
   let app: SlackTestApp["app"];
 
@@ -236,9 +256,10 @@ describe("Slack plugin - chat.postMessage", () => {
 describe("Slack plugin - chat.update", () => {
   let app: SlackTestApp["app"];
   let store: Store;
+  let tokenMap: SlackTestApp["tokenMap"];
 
   beforeEach(() => {
-    ({ app, store } = createTestApp());
+    ({ app, store, tokenMap } = createTestApp());
   });
 
   it("updates a message", async () => {
@@ -334,14 +355,63 @@ describe("Slack plugin - chat.update", () => {
     expect(updated.ok).toBe(true);
     expect(updated.message.blocks).toBeUndefined();
   });
+
+  it("rejects private updates by non-members and public updates by non-authors", async () => {
+    insertSlackTestUser(store, "U000000002", "update-outsider");
+    tokenMap.set("xoxb-update-outsider-token", { login: "U000000002", id: 2, scopes: ["chat:write"] });
+    const outsiderHeaders = {
+      Authorization: "Bearer xoxb-update-outsider-token",
+      "Content-Type": "application/json",
+    };
+
+    const privateCreateRes = await app.request(`${base}/api/conversations.create`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ name: "update-private-authz", is_private: true }),
+    });
+    const privateChannel = ((await privateCreateRes.json()) as any).channel.id;
+
+    const privatePostRes = await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: privateChannel, text: "private original" }),
+    });
+    const privatePost = (await privatePostRes.json()) as any;
+
+    const privateUpdateRes = await app.request(`${base}/api/chat.update`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ channel: privateChannel, ts: privatePost.ts, text: "private changed" }),
+    });
+    const privateUpdate = (await privateUpdateRes.json()) as any;
+    expect(privateUpdate.ok).toBe(false);
+    expect(privateUpdate.error).toBe("not_in_channel");
+
+    const publicPostRes = await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: "C000000001", text: "public original" }),
+    });
+    const publicPost = (await publicPostRes.json()) as any;
+
+    const publicUpdateRes = await app.request(`${base}/api/chat.update`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ channel: "C000000001", ts: publicPost.ts, text: "public changed" }),
+    });
+    const publicUpdate = (await publicUpdateRes.json()) as any;
+    expect(publicUpdate.ok).toBe(false);
+    expect(publicUpdate.error).toBe("cant_update_message");
+  });
 });
 
 describe("Slack plugin - chat.delete", () => {
   let app: SlackTestApp["app"];
   let store: Store;
+  let tokenMap: SlackTestApp["tokenMap"];
 
   beforeEach(() => {
-    ({ app, store } = createTestApp());
+    ({ app, store, tokenMap } = createTestApp());
   });
 
   it("deletes a message", async () => {
@@ -362,6 +432,54 @@ describe("Slack plugin - chat.delete", () => {
     });
     const deleted = (await deleteRes.json()) as any;
     expect(deleted.ok).toBe(true);
+  });
+
+  it("rejects private deletes by non-members and public deletes by non-authors", async () => {
+    insertSlackTestUser(store, "U000000002", "delete-outsider");
+    tokenMap.set("xoxb-delete-outsider-token", { login: "U000000002", id: 2, scopes: ["chat:write"] });
+    const outsiderHeaders = {
+      Authorization: "Bearer xoxb-delete-outsider-token",
+      "Content-Type": "application/json",
+    };
+
+    const privateCreateRes = await app.request(`${base}/api/conversations.create`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ name: "delete-private-authz", is_private: true }),
+    });
+    const privateChannel = ((await privateCreateRes.json()) as any).channel.id;
+
+    const privatePostRes = await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: privateChannel, text: "private delete original" }),
+    });
+    const privatePost = (await privatePostRes.json()) as any;
+
+    const privateDeleteRes = await app.request(`${base}/api/chat.delete`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ channel: privateChannel, ts: privatePost.ts }),
+    });
+    const privateDelete = (await privateDeleteRes.json()) as any;
+    expect(privateDelete.ok).toBe(false);
+    expect(privateDelete.error).toBe("not_in_channel");
+
+    const publicPostRes = await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: "C000000001", text: "public delete original" }),
+    });
+    const publicPost = (await publicPostRes.json()) as any;
+
+    const publicDeleteRes = await app.request(`${base}/api/chat.delete`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ channel: "C000000001", ts: publicPost.ts }),
+    });
+    const publicDelete = (await publicDeleteRes.json()) as any;
+    expect(publicDelete.ok).toBe(false);
+    expect(publicDelete.error).toBe("cant_delete_message");
   });
 });
 
@@ -527,9 +645,10 @@ describe("Slack plugin - chat.postEphemeral", () => {
 describe("Slack plugin - scheduled messages", () => {
   let app: SlackTestApp["app"];
   let store: Store;
+  let tokenMap: SlackTestApp["tokenMap"];
 
   beforeEach(() => {
-    ({ app, store } = createTestApp());
+    ({ app, store, tokenMap } = createTestApp());
   });
 
   it("schedules, lists, and deletes a message", async () => {
@@ -583,6 +702,46 @@ describe("Slack plugin - scheduled messages", () => {
     });
     expect(((await deleteRes.json()) as any).ok).toBe(true);
     expect(ss.scheduledMessages.all()).toEqual([]);
+  });
+
+  it("scopes scheduled message list and delete to the author", async () => {
+    insertSlackTestUser(store, "U000000002", "scheduled-peer");
+    tokenMap.set("xoxb-scheduled-peer-token", { login: "U000000002", id: 2, scopes: ["chat:write"] });
+    const peerHeaders = { Authorization: "Bearer xoxb-scheduled-peer-token", "Content-Type": "application/json" };
+    const ss = getSlackStore(store);
+    const ch = ss.channels.all()[0];
+    const postAt = Math.floor(Date.now() / 1000) + 3600;
+
+    const scheduleRes = await app.request(`${base}/api/chat.scheduleMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        channel: ch.channel_id,
+        text: "admin scheduled message",
+        post_at: postAt,
+      }),
+    });
+    const scheduled = (await scheduleRes.json()) as any;
+    expect(scheduled.ok).toBe(true);
+
+    const peerListRes = await app.request(`${base}/api/chat.scheduledMessages.list`, {
+      method: "POST",
+      headers: peerHeaders,
+      body: JSON.stringify({ channel: ch.channel_id }),
+    });
+    const peerList = (await peerListRes.json()) as any;
+    expect(peerList.ok).toBe(true);
+    expect(peerList.scheduled_messages).toEqual([]);
+
+    const peerDeleteRes = await app.request(`${base}/api/chat.deleteScheduledMessage`, {
+      method: "POST",
+      headers: peerHeaders,
+      body: JSON.stringify({ channel: ch.channel_id, scheduled_message_id: scheduled.scheduled_message_id }),
+    });
+    const peerDelete = (await peerDeleteRes.json()) as any;
+    expect(peerDelete.ok).toBe(false);
+    expect(peerDelete.error).toBe("cant_delete_message");
+    expect(ss.scheduledMessages.findOneBy("scheduled_message_id", scheduled.scheduled_message_id)).toBeDefined();
   });
 
   it("returns time_in_past for past scheduled messages", async () => {
@@ -654,9 +813,10 @@ describe("Slack plugin - scheduled messages", () => {
 describe("Slack plugin - conversations", () => {
   let app: SlackTestApp["app"];
   let store: Store;
+  let tokenMap: SlackTestApp["tokenMap"];
 
   beforeEach(() => {
-    ({ app, store } = createTestApp());
+    ({ app, store, tokenMap } = createTestApp());
   });
 
   it("lists channels", async () => {
@@ -684,6 +844,91 @@ describe("Slack plugin - conversations", () => {
     expect(body.ok).toBe(true);
     expect(body.channel.id).toBe(ch.channel_id);
     expect(body.channel.name).toBe(ch.name);
+  });
+
+  it("handles legacy username channel membership consistently", async () => {
+    const ss = getSlackStore(store);
+    const ch = ss.channels.findOneBy("name", "random")!;
+    insertSlackTestUser(store, "U000000002", "legacy-member-peer");
+    ss.channels.update(ch.id, { members: ["admin", "U000000002"], num_members: 2 });
+
+    const infoRes = await app.request(`${base}/api/conversations.info`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: ch.channel_id }),
+    });
+    const info = (await infoRes.json()) as any;
+    expect(info.ok).toBe(true);
+    expect(info.channel.is_member).toBe(true);
+
+    const joinRes = await app.request(`${base}/api/conversations.join`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: ch.channel_id }),
+    });
+    const joined = (await joinRes.json()) as any;
+    expect(joined.ok).toBe(true);
+    expect(joined.channel.num_members).toBe(2);
+    expect(ss.channels.findOneBy("channel_id", ch.channel_id)?.members).toEqual(["admin", "U000000002"]);
+
+    const leaveRes = await app.request(`${base}/api/conversations.leave`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: ch.channel_id }),
+    });
+    expect(((await leaveRes.json()) as any).ok).toBe(true);
+    expect(ss.channels.findOneBy("channel_id", ch.channel_id)?.members).toEqual(["U000000002"]);
+  });
+
+  it("hides private channel reads from non-members", async () => {
+    insertSlackTestUser(store, "U000000002", "private-outsider");
+    tokenMap.set("xoxb-private-outsider-token", { login: "U000000002", id: 2, scopes: ["channels:read"] });
+    const outsiderHeaders = {
+      Authorization: "Bearer xoxb-private-outsider-token",
+      "Content-Type": "application/json",
+    };
+
+    const createRes = await app.request(`${base}/api/conversations.create`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ name: "private-read-authz", is_private: true }),
+    });
+    const channel = ((await createRes.json()) as any).channel.id;
+
+    const postRes = await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel, text: "private message" }),
+    });
+    const posted = (await postRes.json()) as any;
+
+    const listRes = await app.request(`${base}/api/conversations.list`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ types: "private_channel" }),
+    });
+    const list = (await listRes.json()) as any;
+    expect(list.ok).toBe(true);
+    expect(list.channels.map((listed: any) => listed.id)).not.toContain(channel);
+
+    const blockedRequests = [
+      { path: "conversations.info", body: { channel } },
+      { path: "conversations.history", body: { channel } },
+      { path: "conversations.replies", body: { channel, ts: posted.ts } },
+      { path: "conversations.join", body: { channel } },
+      { path: "conversations.members", body: { channel } },
+    ];
+
+    for (const request of blockedRequests) {
+      const res = await app.request(`${base}/api/${request.path}`, {
+        method: "POST",
+        headers: outsiderHeaders,
+        body: JSON.stringify(request.body),
+      });
+      const body = (await res.json()) as any;
+      expect(body.ok, request.path).toBe(false);
+      expect(body.error, request.path).toBe("not_in_channel");
+    }
   });
 
   it("creates a channel", async () => {
@@ -906,6 +1151,13 @@ describe("Slack plugin - conversations", () => {
     const created = (await createRes.json()) as any;
     const channelId = created.channel.id;
 
+    insertSlackTestUser(store, "U000000002", "lifecycle-state-peer");
+    await app.request(`${base}/api/conversations.invite`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: channelId, users: "U000000002" }),
+    });
+
     await app.request(`${base}/api/conversations.leave`, {
       method: "POST",
       headers: authHeaders(),
@@ -1019,6 +1271,13 @@ describe("Slack plugin - conversations", () => {
     const created = (await createRes.json()) as any;
     const channelId = created.channel.id;
 
+    insertSlackTestUser(store, "U000000002", "join-test-peer");
+    await app.request(`${base}/api/conversations.invite`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: channelId, users: "U000000002" }),
+    });
+
     // Leave
     const leaveRes = await app.request(`${base}/api/conversations.leave`, {
       method: "POST",
@@ -1035,7 +1294,53 @@ describe("Slack plugin - conversations", () => {
     });
     const joined = (await joinRes.json()) as any;
     expect(joined.ok).toBe(true);
-    expect(joined.channel.num_members).toBe(1);
+    expect(joined.channel.num_members).toBe(2);
+  });
+
+  it("rejects invalid leave states without mutating membership", async () => {
+    const ss = getSlackStore(store);
+    const general = ss.channels.findOneBy("name", "general")!;
+    const generalLeaveRes = await app.request(`${base}/api/conversations.leave`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: general.channel_id }),
+    });
+    const generalLeave = (await generalLeaveRes.json()) as any;
+    expect(generalLeave.ok).toBe(false);
+    expect(generalLeave.error).toBe("cant_leave_general");
+    expect(ss.channels.findOneBy("channel_id", general.channel_id)?.members).toEqual(["U000000001"]);
+
+    const createRes = await app.request(`${base}/api/conversations.create`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ name: "leave-guards" }),
+    });
+    const created = (await createRes.json()) as any;
+    const channelId = created.channel.id;
+
+    const lastMemberLeaveRes = await app.request(`${base}/api/conversations.leave`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: channelId }),
+    });
+    const lastMemberLeave = (await lastMemberLeaveRes.json()) as any;
+    expect(lastMemberLeave.ok).toBe(false);
+    expect(lastMemberLeave.error).toBe("last_member");
+    expect(ss.channels.findOneBy("channel_id", channelId)?.members).toEqual(["U000000001"]);
+
+    insertSlackTestUser(store, "U000000002", "leave-outsider");
+    tokenMap.set("xoxb-leave-outsider-token", { login: "U000000002", id: 2, scopes: ["channels:write"] });
+    const outsiderLeaveRes = await app.request(`${base}/api/conversations.leave`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer xoxb-leave-outsider-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ channel: channelId }),
+    });
+    const outsiderLeave = (await outsiderLeaveRes.json()) as any;
+    expect(outsiderLeave).toEqual({ ok: false, not_in_channel: true });
+    expect(ss.channels.findOneBy("channel_id", channelId)?.members).toEqual(["U000000001"]);
   });
 
   it("lists channel members", async () => {
@@ -1050,6 +1355,433 @@ describe("Slack plugin - conversations", () => {
     const body = (await res.json()) as any;
     expect(body.ok).toBe(true);
     expect(body.members.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("invites and kicks channel members", async () => {
+    insertSlackTestUser(store, "U000000002", "teammate");
+    const ss = getSlackStore(store);
+    const ch = ss.channels.findOneBy("name", "random")!;
+
+    const inviteRes = await app.request(`${base}/api/conversations.invite`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: ch.channel_id, users: "U000000002" }),
+    });
+    const invited = (await inviteRes.json()) as any;
+    expect(invited.ok).toBe(true);
+    expect(invited.channel.members).toBeUndefined();
+
+    const membersRes = await app.request(`${base}/api/conversations.members`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: ch.channel_id }),
+    });
+    const members = (await membersRes.json()) as any;
+    expect(members.members).toContain("U000000002");
+
+    const duplicateRes = await app.request(`${base}/api/conversations.invite`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: ch.channel_id, users: "U000000002" }),
+    });
+    const duplicate = (await duplicateRes.json()) as any;
+    expect(duplicate.ok).toBe(false);
+    expect(duplicate.error).toBe("already_in_channel");
+
+    const kickRes = await app.request(`${base}/api/conversations.kick`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: ch.channel_id, user: "U000000002" }),
+    });
+    expect(((await kickRes.json()) as any).ok).toBe(true);
+
+    const afterKickRes = await app.request(`${base}/api/conversations.members`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: ch.channel_id }),
+    });
+    const afterKick = (await afterKickRes.json()) as any;
+    expect(afterKick.members).not.toContain("U000000002");
+  });
+
+  it("rejects invalid membership writes", async () => {
+    insertSlackTestUser(store, "U000000002", "cannotkick");
+    const ss = getSlackStore(store);
+    const general = ss.channels.findOneBy("name", "general")!;
+    const random = ss.channels.findOneBy("name", "random")!;
+
+    const selfInviteRes = await app.request(`${base}/api/conversations.invite`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: random.channel_id, users: "U000000001" }),
+    });
+    const selfInvite = (await selfInviteRes.json()) as any;
+    expect(selfInvite.ok).toBe(false);
+    expect(selfInvite.error).toBe("cant_invite_self");
+
+    const selfKickRes = await app.request(`${base}/api/conversations.kick`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: random.channel_id, user: "U000000001" }),
+    });
+    const selfKick = (await selfKickRes.json()) as any;
+    expect(selfKick.ok).toBe(false);
+    expect(selfKick.error).toBe("cant_kick_self");
+
+    const generalKickRes = await app.request(`${base}/api/conversations.kick`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: general.channel_id, user: "U000000002" }),
+    });
+    const generalKick = (await generalKickRes.json()) as any;
+    expect(generalKick.ok).toBe(false);
+    expect(generalKick.error).toBe("cant_kick_from_general");
+
+    const inviteRes = await app.request(`${base}/api/conversations.invite`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: random.channel_id, users: "U000000002" }),
+    });
+    expect(((await inviteRes.json()) as any).ok).toBe(true);
+
+    const archiveRes = await app.request(`${base}/api/conversations.archive`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: random.channel_id }),
+    });
+    expect(((await archiveRes.json()) as any).ok).toBe(true);
+
+    const archivedKickRes = await app.request(`${base}/api/conversations.kick`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: random.channel_id, user: "U000000002" }),
+    });
+    const archivedKick = (await archivedKickRes.json()) as any;
+    expect(archivedKick.ok).toBe(false);
+    expect(archivedKick.error).toBe("is_archived");
+    expect(getSlackStore(store).channels.findOneBy("name", "random")?.members).toContain("U000000002");
+  });
+
+  it("opens, closes, lists, marks, and posts to direct messages", async () => {
+    insertSlackTestUser(store, "U000000002", "dmuser");
+
+    const openRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ users: "U000000002", return_im: true }),
+    });
+    const opened = (await openRes.json()) as any;
+    expect(opened.ok).toBe(true);
+    expect(opened.channel.id).toMatch(/^D/);
+    expect(opened.channel.is_im).toBe(true);
+    expect(opened.channel.is_open).toBe(true);
+    expect(opened.channel.user).toBe("U000000002");
+
+    const listRes = await app.request(`${base}/api/conversations.list`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ types: "im" }),
+    });
+    const list = (await listRes.json()) as any;
+    expect(list.channels.map((channel: any) => channel.id)).toContain(opened.channel.id);
+
+    const postRes = await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: "U000000002", text: "hello dm" }),
+    });
+    const posted = (await postRes.json()) as any;
+    expect(posted.ok).toBe(true);
+    expect(posted.channel).toBe(opened.channel.id);
+
+    const markRes = await app.request(`${base}/api/conversations.mark`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: opened.channel.id, ts: posted.ts }),
+    });
+    expect(((await markRes.json()) as any).ok).toBe(true);
+
+    const infoRes = await app.request(`${base}/api/conversations.info`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: opened.channel.id }),
+    });
+    const info = (await infoRes.json()) as any;
+    expect(info.channel.last_read).toBe(posted.ts);
+
+    const closeRes = await app.request(`${base}/api/conversations.close`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: opened.channel.id }),
+    });
+    expect(((await closeRes.json()) as any).ok).toBe(true);
+
+    const duplicateCloseRes = await app.request(`${base}/api/conversations.close`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: opened.channel.id }),
+    });
+    const duplicateClose = (await duplicateCloseRes.json()) as any;
+    expect(duplicateClose).toMatchObject({ ok: true, no_op: true, already_closed: true });
+  });
+
+  it("does not let direct conversation names reserve channel names", async () => {
+    insertSlackTestUser(store, "U000000002", "support");
+
+    const openRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ users: "U000000002", return_im: true }),
+    });
+    const opened = (await openRes.json()) as any;
+    expect(opened.ok).toBe(true);
+    expect(opened.channel.name).toBe("support");
+
+    const createRes = await app.request(`${base}/api/conversations.create`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ name: "support" }),
+    });
+    const created = (await createRes.json()) as any;
+    expect(created.ok).toBe(true);
+    expect(created.channel.name).toBe("support");
+
+    const postRes = await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: "support", text: "channel message" }),
+    });
+    const posted = (await postRes.json()) as any;
+    expect(posted.ok).toBe(true);
+    expect(posted.channel).toBe(created.channel.id);
+    expect(posted.channel).not.toBe(opened.channel.id);
+  });
+
+  it("keeps direct message open state per member and protects channel id writes", async () => {
+    insertSlackTestUser(store, "U000000002", "dmpeer");
+    insertSlackTestUser(store, "U000000003", "dmoutsider");
+    tokenMap.set("xoxb-dm-peer-token", { login: "U000000002", id: 2, scopes: ["chat:write"] });
+    tokenMap.set("xoxb-dm-outsider-token", { login: "U000000003", id: 3, scopes: ["chat:write"] });
+    const peerHeaders = { Authorization: "Bearer xoxb-dm-peer-token", "Content-Type": "application/json" };
+    const outsiderHeaders = { Authorization: "Bearer xoxb-dm-outsider-token", "Content-Type": "application/json" };
+
+    const openRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ users: "U000000002", return_im: true }),
+    });
+    const opened = (await openRes.json()) as any;
+    const channel = opened.channel.id;
+    expect(opened.channel.is_open).toBe(true);
+
+    const peerInfoRes = await app.request(`${base}/api/conversations.info`, {
+      method: "POST",
+      headers: peerHeaders,
+      body: JSON.stringify({ channel }),
+    });
+    const peerInfo = (await peerInfoRes.json()) as any;
+    expect(peerInfo.channel.is_open).toBe(false);
+
+    const outsiderOpenRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ channel }),
+    });
+    const outsiderOpen = (await outsiderOpenRes.json()) as any;
+    expect(outsiderOpen.ok).toBe(false);
+    expect(outsiderOpen.error).toBe("not_in_channel");
+
+    const outsiderCloseRes = await app.request(`${base}/api/conversations.close`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ channel }),
+    });
+    const outsiderClose = (await outsiderCloseRes.json()) as any;
+    expect(outsiderClose.ok).toBe(false);
+    expect(outsiderClose.error).toBe("not_in_channel");
+
+    const outsiderPostRes = await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ channel, text: "blocked direct write" }),
+    });
+    const outsiderPost = (await outsiderPostRes.json()) as any;
+    expect(outsiderPost.ok).toBe(false);
+    expect(outsiderPost.error).toBe("not_in_channel");
+    expect(getSlackStore(store).messages.findBy("channel_id", channel)).toHaveLength(0);
+
+    const closeRes = await app.request(`${base}/api/conversations.close`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel }),
+    });
+    expect(((await closeRes.json()) as any).ok).toBe(true);
+
+    const peerOpenRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: peerHeaders,
+      body: JSON.stringify({ channel, return_im: true }),
+    });
+    const peerOpen = (await peerOpenRes.json()) as any;
+    expect(peerOpen.ok).toBe(true);
+    expect(peerOpen.channel.is_open).toBe(true);
+
+    const adminInfoRes = await app.request(`${base}/api/conversations.info`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel }),
+    });
+    const adminInfo = (await adminInfoRes.json()) as any;
+    expect(adminInfo.channel.is_open).toBe(false);
+  });
+
+  it("hides direct conversations from non-members and formats IM users per viewer", async () => {
+    insertSlackTestUser(store, "U000000002", "privateimone");
+    insertSlackTestUser(store, "U000000003", "privateimtwo");
+    tokenMap.set("xoxb-private-im-one-token", { login: "U000000002", id: 2, scopes: ["chat:write"] });
+    tokenMap.set("xoxb-private-im-two-token", { login: "U000000003", id: 3, scopes: ["chat:write"] });
+    const oneHeaders = { Authorization: "Bearer xoxb-private-im-one-token", "Content-Type": "application/json" };
+    const twoHeaders = { Authorization: "Bearer xoxb-private-im-two-token", "Content-Type": "application/json" };
+
+    const openRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: oneHeaders,
+      body: JSON.stringify({ users: "U000000003", return_im: true }),
+    });
+    const opened = (await openRes.json()) as any;
+    const channel = opened.channel.id;
+    expect(opened.channel.user).toBe("U000000003");
+
+    const participantInfoRes = await app.request(`${base}/api/conversations.info`, {
+      method: "POST",
+      headers: twoHeaders,
+      body: JSON.stringify({ channel }),
+    });
+    const participantInfo = (await participantInfoRes.json()) as any;
+    expect(participantInfo.ok).toBe(true);
+    expect(participantInfo.channel.user).toBe("U000000002");
+
+    const participantListRes = await app.request(`${base}/api/conversations.list`, {
+      method: "POST",
+      headers: twoHeaders,
+      body: JSON.stringify({ types: "im" }),
+    });
+    const participantList = (await participantListRes.json()) as any;
+    const participantListed = participantList.channels.find((listed: any) => listed.id === channel);
+    expect(participantListed.user).toBe("U000000002");
+
+    const outsiderListRes = await app.request(`${base}/api/conversations.list`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ types: "im" }),
+    });
+    const outsiderList = (await outsiderListRes.json()) as any;
+    expect(outsiderList.channels.map((listed: any) => listed.id)).not.toContain(channel);
+
+    const blockedReads = [
+      { path: "conversations.info", body: { channel } },
+      { path: "conversations.history", body: { channel } },
+      { path: "conversations.replies", body: { channel, ts: "1234567890.000001" } },
+      { path: "conversations.members", body: { channel } },
+    ];
+
+    for (const request of blockedReads) {
+      const res = await app.request(`${base}/api/${request.path}`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(request.body),
+      });
+      const body = (await res.json()) as any;
+      expect(body.ok, request.path).toBe(false);
+      expect(body.error, request.path).toBe("not_in_channel");
+    }
+  });
+
+  it("rejects lifecycle writes for direct conversations", async () => {
+    insertSlackTestUser(store, "U000000002", "directlifeone");
+    insertSlackTestUser(store, "U000000003", "directlifetwo");
+
+    const dmRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ users: "U000000002", return_im: true }),
+    });
+    const dm = (await dmRes.json()) as any;
+
+    const mpimRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ users: "U000000002,U000000003", return_im: true }),
+    });
+    const mpim = (await mpimRes.json()) as any;
+
+    const unsupportedRequests = [
+      { path: "conversations.archive", body: { channel: dm.channel.id } },
+      { path: "conversations.unarchive", body: { channel: dm.channel.id } },
+      { path: "conversations.rename", body: { channel: dm.channel.id, name: "direct-life-renamed" } },
+      { path: "conversations.setTopic", body: { channel: mpim.channel.id, topic: "no topic" } },
+      { path: "conversations.setPurpose", body: { channel: mpim.channel.id, purpose: "no purpose" } },
+    ];
+
+    for (const request of unsupportedRequests) {
+      const res = await app.request(`${base}/api/${request.path}`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(request.body),
+      });
+      const body = (await res.json()) as any;
+      expect(body.ok, request.path).toBe(false);
+      expect(body.error, request.path).toBe("method_not_supported_for_channel_type");
+    }
+  });
+
+  it("opens MPIMs and filters conversation list types", async () => {
+    insertSlackTestUser(store, "U000000002", "mpimone");
+    insertSlackTestUser(store, "U000000003", "mpimtwo");
+    insertSlackTestUser(store, "U000000004", "mpimthree");
+
+    const openRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ users: "U000000002,U000000003", return_im: true }),
+    });
+    const opened = (await openRes.json()) as any;
+    expect(opened.ok).toBe(true);
+    expect(opened.channel.id).toMatch(/^G/);
+    expect(opened.channel.is_mpim).toBe(true);
+    expect(opened.channel.num_members).toBe(3);
+
+    const repeatOpenRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ users: "U000000003,U000000002" }),
+    });
+    const repeatOpen = (await repeatOpenRes.json()) as any;
+    expect(repeatOpen).toMatchObject({ ok: true, no_op: true, already_open: true });
+    expect(repeatOpen.channel.id).toBe(opened.channel.id);
+
+    const listRes = await app.request(`${base}/api/conversations.list`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ types: "mpim" }),
+    });
+    const list = (await listRes.json()) as any;
+    expect(list.channels.map((channel: any) => channel.id)).toContain(opened.channel.id);
+    expect(list.channels.every((channel: any) => channel.is_mpim)).toBe(true);
+
+    const inviteRes = await app.request(`${base}/api/conversations.invite`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: opened.channel.id, users: "U000000004" }),
+    });
+    expect(((await inviteRes.json()) as any).ok).toBe(true);
+
+    const kickRes = await app.request(`${base}/api/conversations.kick`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: opened.channel.id, user: "U000000004" }),
+    });
+    expect(((await kickRes.json()) as any).ok).toBe(true);
   });
 });
 
@@ -1108,9 +1840,10 @@ describe("Slack plugin - users", () => {
 describe("Slack plugin - reactions", () => {
   let app: SlackTestApp["app"];
   let store: Store;
+  let tokenMap: SlackTestApp["tokenMap"];
 
   beforeEach(() => {
-    ({ app, store } = createTestApp());
+    ({ app, store, tokenMap } = createTestApp());
   });
 
   it("adds and gets a reaction", async () => {
@@ -1204,6 +1937,116 @@ describe("Slack plugin - reactions", () => {
     const dupe = (await dupeRes.json()) as any;
     expect(dupe.ok).toBe(false);
     expect(dupe.error).toBe("already_reacted");
+  });
+
+  it("blocks non-member reactions on private channels", async () => {
+    insertSlackTestUser(store, "U000000002", "reaction-outsider");
+    tokenMap.set("xoxb-reaction-outsider-token", { login: "U000000002", id: 2, scopes: ["reactions:write"] });
+    const outsiderHeaders = {
+      Authorization: "Bearer xoxb-reaction-outsider-token",
+      "Content-Type": "application/json",
+    };
+
+    const createRes = await app.request(`${base}/api/conversations.create`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ name: "private-reactions", is_private: true }),
+    });
+    const channel = ((await createRes.json()) as any).channel.id;
+
+    const postRes = await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel, text: "private reaction target" }),
+    });
+    const posted = (await postRes.json()) as any;
+
+    await app.request(`${base}/api/reactions.add`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel, timestamp: posted.ts, name: "lock" }),
+    });
+
+    const blockedRequests = [
+      { path: "reactions.get", body: { channel, timestamp: posted.ts } },
+      { path: "reactions.add", body: { channel, timestamp: posted.ts, name: "eyes" } },
+      { path: "reactions.remove", body: { channel, timestamp: posted.ts, name: "lock" } },
+    ];
+
+    for (const request of blockedRequests) {
+      const res = await app.request(`${base}/api/${request.path}`, {
+        method: "POST",
+        headers: outsiderHeaders,
+        body: JSON.stringify(request.body),
+      });
+      const body = (await res.json()) as any;
+      expect(body.ok, request.path).toBe(false);
+      expect(body.error, request.path).toBe("not_in_channel");
+    }
+
+    const msg = getSlackStore(store).messages.findOneBy("ts", posted.ts)!;
+    expect(msg.reactions).toHaveLength(1);
+    expect(msg.reactions[0]).toMatchObject({ name: "lock", count: 1 });
+  });
+
+  it("blocks non-member reactions on direct messages", async () => {
+    insertSlackTestUser(store, "U000000002", "reaction-dm-peer");
+    insertSlackTestUser(store, "U000000003", "reaction-dm-outsider");
+    tokenMap.set("xoxb-reaction-dm-outsider-token", { login: "U000000003", id: 3, scopes: ["reactions:write"] });
+    const outsiderHeaders = {
+      Authorization: "Bearer xoxb-reaction-dm-outsider-token",
+      "Content-Type": "application/json",
+    };
+
+    const openRes = await app.request(`${base}/api/conversations.open`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ users: "U000000002", return_im: true }),
+    });
+    const channel = ((await openRes.json()) as any).channel.id;
+
+    const postRes = await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel, text: "dm reaction target" }),
+    });
+    const posted = (await postRes.json()) as any;
+
+    await app.request(`${base}/api/reactions.add`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel, timestamp: posted.ts, name: "lock" }),
+    });
+
+    const getRes = await app.request(`${base}/api/reactions.get`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ channel, timestamp: posted.ts }),
+    });
+    const getBody = (await getRes.json()) as any;
+    expect(getBody.ok).toBe(false);
+    expect(getBody.error).toBe("not_in_channel");
+
+    const addRes = await app.request(`${base}/api/reactions.add`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ channel, timestamp: posted.ts, name: "eyes" }),
+    });
+    const addBody = (await addRes.json()) as any;
+    expect(addBody.ok).toBe(false);
+    expect(addBody.error).toBe("not_in_channel");
+
+    const removeRes = await app.request(`${base}/api/reactions.remove`, {
+      method: "POST",
+      headers: outsiderHeaders,
+      body: JSON.stringify({ channel, timestamp: posted.ts, name: "lock" }),
+    });
+    const removeBody = (await removeRes.json()) as any;
+    expect(removeBody.ok).toBe(false);
+    expect(removeBody.error).toBe("not_in_channel");
+    expect(getSlackStore(store).messages.findOneBy("ts", posted.ts)?.reactions).toEqual([
+      expect.objectContaining({ name: "lock", count: 1 }),
+    ]);
   });
 });
 
