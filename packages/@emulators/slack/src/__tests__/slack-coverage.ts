@@ -19,6 +19,15 @@ export const slackCoverageMatrix: SlackCoverageEntry[] = [
     notes: "Bearer token auth returns user and team identity.",
   },
   {
+    family: "search",
+    method: "search.messages",
+    route: ["GET /api/search.messages", "POST /api/search.messages"],
+    status: "partial",
+    testedBy: ["slack.test.ts"],
+    notes:
+      "Searches visible messages by text, from, and channel with page pagination. Advanced Slack search modifiers and relevance scoring are future work.",
+  },
+  {
     family: "chat",
     method: "chat.postMessage",
     route: "POST /api/chat.postMessage",

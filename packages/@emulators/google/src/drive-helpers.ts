@@ -81,6 +81,15 @@ export function listDriveItems(
     items = items.filter((item) => !parsed.excludeMimeTypes.includes(item.mime_type));
   }
 
+  if (parsed.name) {
+    items = items.filter((item) => item.name === parsed.name);
+  }
+
+  if (parsed.nameContains) {
+    const needle = parsed.nameContains.toLowerCase();
+    items = items.filter((item) => item.name.toLowerCase().includes(needle));
+  }
+
   if (options.orderBy?.includes("name")) {
     items = items.sort((a, b) => a.name.localeCompare(b.name));
   } else {
@@ -219,17 +228,23 @@ function parseDriveQuery(query: string | null): {
   mimeTypes: string[];
   excludeMimeTypes: string[];
   requireNotTrashed: boolean;
+  name: string | null;
+  nameContains: string | null;
 } {
   const source = query ?? "";
   const parentMatch = source.match(/'([^']+)' in parents/i);
   const mimeTypes = Array.from(source.matchAll(/mimeType = '([^']+)'/g)).map((match) => match[1]);
   const excludeMimeTypes = Array.from(source.matchAll(/mimeType != '([^']+)'/g)).map((match) => match[1]);
+  const nameMatch = source.match(/name = '((?:\\'|[^'])+)'/i);
+  const nameContainsMatch = source.match(/name contains '((?:\\'|[^'])+)'/i);
 
   return {
     parentId: parentMatch?.[1] ?? null,
     mimeTypes,
     excludeMimeTypes,
     requireNotTrashed: source.includes("trashed = false"),
+    name: nameMatch?.[1]?.replaceAll("\\'", "'") ?? null,
+    nameContains: nameContainsMatch?.[1]?.replaceAll("\\'", "'") ?? null,
   };
 }
 

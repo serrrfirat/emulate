@@ -182,6 +182,21 @@ google:
       name: Docs
       mime_type: application/vnd.google-apps.folder
       parent_ids: [root]
+  documents:
+    - id: doc_runbook
+      user_email: testuser@example.com
+      title: Incident Runbook
+      body: Check the service dashboard first.
+  spreadsheets:
+    - id: sheet_tracker
+      user_email: testuser@example.com
+      title: Bug Tracker
+      sheets:
+        - id: 17
+          title: Bugs
+          values:
+            - [ID, Status]
+            - [BUG-1, Open]
 ```
 
 ### Hosted domain (hd) claim
@@ -228,6 +243,7 @@ slack:
         - pins:write
         - bookmarks:read
         - bookmarks:write
+        - search:read
   tokens:
     - token: xoxb-local-test
       user: developer
@@ -243,6 +259,7 @@ slack:
         - pins:write
         - bookmarks:read
         - bookmarks:write
+        - search:read
   incoming_webhooks:
     - channel: general
       label: CI Notifications

@@ -20,6 +20,10 @@ program
 Framework adapters:
   Embed emulators in app routes with @emulators/adapter-next or @emulators/adapter-nuxt.
   Docs: https://emulate.dev/docs/nextjs and https://emulate.dev/docs/nuxt
+
+Workspace APIs:
+  Google includes Gmail, Calendar, Drive, Docs, and Sheets.
+  Slack includes channels, messages, message search, OAuth, and webhooks.
 `,
   );
 

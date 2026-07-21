@@ -60,6 +60,92 @@ describe("Slack plugin - auth.test", () => {
   });
 });
 
+describe("Slack plugin - search.messages", () => {
+  let app: SlackTestApp["app"];
+  let store: Store;
+  let tokenMap: SlackTestApp["tokenMap"];
+
+  beforeEach(async () => {
+    ({ app, store, tokenMap } = createTestApp());
+    await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: "general", text: "release checklist is ready" }),
+    });
+    await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: "random", text: "release celebration" }),
+    });
+  });
+
+  it("searches accessible messages with Slack query modifiers and pagination", async () => {
+    const res = await app.request(
+      `${base}/api/search.messages?query=${encodeURIComponent("release from:me in:#general")}&count=1&page=1&sort=timestamp&sort_dir=desc`,
+      { headers: authHeaders() },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.ok).toBe(true);
+    expect(body.messages.total).toBe(1);
+    expect(body.messages.paging).toMatchObject({ count: 1, page: 1, pages: 1 });
+    expect(body.messages.matches[0]).toMatchObject({
+      user: "U000000001",
+      username: "admin",
+      text: "release checklist is ready",
+      channel: { id: "C000000001", name: "general" },
+    });
+    expect(body.messages.matches[0].permalink).toContain("/archives/C000000001/p");
+  });
+
+  it("does not expose messages from private conversations the user cannot access", async () => {
+    const ss = getSlackStore(store);
+    const privateChannel = ss.channels.insert({
+      channel_id: "CPRIVATE01",
+      team_id: "T000000001",
+      name: "leadership",
+      is_channel: false,
+      is_private: true,
+      is_archived: false,
+      topic: { value: "", creator: "UOTHER0001", last_set: 0 },
+      purpose: { value: "", creator: "UOTHER0001", last_set: 0 },
+      members: ["UOTHER0001"],
+      creator: "UOTHER0001",
+      num_members: 1,
+    });
+    ss.messages.insert({
+      ts: "1750000000.000001",
+      channel_id: privateChannel.channel_id,
+      user: "UOTHER0001",
+      text: "confidential launch release",
+      type: "message",
+      reply_count: 0,
+      reply_users: [],
+      reactions: [],
+    });
+
+    const res = await app.request(`${base}/api/search.messages?query=${encodeURIComponent("confidential")}`, {
+      headers: authHeaders(),
+    });
+    const body = (await res.json()) as any;
+    expect(body.ok).toBe(true);
+    expect(body.messages.total).toBe(0);
+    expect(body.messages.matches).toEqual([]);
+  });
+
+  it("requires search:read when strict scope checks are enabled", async () => {
+    store.setData("slack.strict_scopes", true);
+    tokenMap.set("xoxb-test-token", {
+      login: "U000000001",
+      id: 1,
+      scopes: ["chat:write"],
+    });
+
+    const res = await app.request(`${base}/api/search.messages?query=release`, { headers: authHeaders() });
+    expect(await res.json()).toMatchObject({ ok: false, error: "missing_scope", needed: "search:read" });
+  });
+});
+
 describe("Slack plugin - chat.postMessage", () => {
   let app: SlackTestApp["app"];
   let store: Store;

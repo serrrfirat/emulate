@@ -1,6 +1,6 @@
 # Google API
 
-OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local inbox, calendar, and drive flows.
+OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local inbox, calendar, drive, document, and spreadsheet flows.
 
 ## OAuth & OpenID Connect
 
@@ -75,3 +75,20 @@ OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local
 - `PATCH /drive/v3/files/:fileId` - update file metadata
 - `PUT /drive/v3/files/:fileId` - update file content
 - `POST /upload/drive/v3/files` - upload file
+
+## Docs
+
+- `POST /v1/documents` - create document
+- `GET /v1/documents/:documentId` - read document structure and text
+- `POST /v1/documents/:documentId:batchUpdate` - insert, delete, replace, and accept common formatting requests
+
+## Sheets
+
+- `POST /v4/spreadsheets` - create spreadsheet
+- `GET /v4/spreadsheets/:spreadsheetId` - get spreadsheet and sheet metadata
+- `GET /v4/spreadsheets/:spreadsheetId/values/:range` - read A1 values
+- `PUT /v4/spreadsheets/:spreadsheetId/values/:range` - write A1 values
+- `POST /v4/spreadsheets/:spreadsheetId/values/:range:append` - append rows
+- `POST /v4/spreadsheets/:spreadsheetId/values/:range:clear` - clear values
+- `GET /v4/spreadsheets/:spreadsheetId/values:batchGet` - read multiple ranges
+- `POST /v4/spreadsheets/:spreadsheetId:batchUpdate` - add, delete, rename, or format sheets

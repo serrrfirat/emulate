@@ -40,7 +40,7 @@ export function createSlackTestApp(baseUrl = slackTestBaseUrl): SlackTestApp {
   tokenMap.set(slackTestToken, {
     login: "U000000001",
     id: 1,
-    scopes: ["chat:write", "channels:read", "users:read", "reactions:write"],
+    scopes: ["chat:write", "channels:read", "users:read", "reactions:write", "search:read"],
   });
 
   const app = new Hono<AppEnv>() as Hono<AppEnv> & SlackTestHttpApp;
@@ -72,7 +72,7 @@ export async function startSlackTestEmulator(
   tokenMap.set(slackTestToken, {
     login: "U000000001",
     id: 1,
-    scopes: ["chat:write", "channels:read", "users:read", "reactions:write"],
+    scopes: ["chat:write", "channels:read", "users:read", "reactions:write", "search:read"],
   });
 
   const app = new Hono<AppEnv>() as Hono<AppEnv> & SlackTestHttpApp;

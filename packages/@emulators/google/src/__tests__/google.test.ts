@@ -170,6 +170,31 @@ function createTestApp() {
         data: "pdf-handbook-data",
       },
     ],
+    documents: [
+      {
+        id: "doc_runbook",
+        user_email: "testuser@example.com",
+        title: "Incident Runbook",
+        body: "Check the service dashboard first.\n",
+      },
+    ],
+    spreadsheets: [
+      {
+        id: "sheet_tracker",
+        user_email: "testuser@example.com",
+        title: "Bug Tracker",
+        sheets: [
+          {
+            id: 17,
+            title: "Bugs",
+            values: [
+              ["ID", "Status"],
+              ["BUG-1", "Open"],
+            ],
+          },
+        ],
+      },
+    ],
   });
 
   return { app };
@@ -1100,5 +1125,114 @@ describe("Google plugin integration", () => {
     });
     expect(uploadedMediaRes.status).toBe(200);
     expect(Buffer.from(await uploadedMediaRes.arrayBuffer()).toString("utf8")).toBe(uploadedContent);
+  });
+
+  it("creates, edits, and reads Google Docs while exposing them through Drive", async () => {
+    const createRes = await jsonRequest(app, "/v1/documents", {
+      method: "POST",
+      body: { title: "Launch Plan" },
+    });
+    expect(createRes.status).toBe(200);
+    const created = (await createRes.json()) as { documentId: string; revisionId: string };
+
+    const updateRes = await jsonRequest(app, `/v1/documents/${created.documentId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          { insertText: { endOfSegmentLocation: {}, text: "Ship on Friday.\n" } },
+          { replaceAllText: { containsText: { text: "Friday", matchCase: true }, replaceText: "Monday" } },
+        ],
+      },
+    });
+    expect(updateRes.status).toBe(200);
+    const update = (await updateRes.json()) as {
+      replies: Array<{ replaceAllText?: { occurrencesChanged: number } }>;
+      writeControl: { requiredRevisionId: string };
+    };
+    expect(update.replies[1].replaceAllText?.occurrencesChanged).toBe(1);
+    expect(update.writeControl.requiredRevisionId).not.toBe(created.revisionId);
+
+    const readRes = await app.request(`${base}/v1/documents/${created.documentId}`, { headers: authHeaders() });
+    expect(readRes.status).toBe(200);
+    const document = (await readRes.json()) as {
+      body: { content: Array<{ paragraph: { elements: Array<{ textRun: { content: string } }> } }> };
+    };
+    expect(document.body.content[0].paragraph.elements[0].textRun.content).toBe("Ship on Monday.\n");
+
+    const driveRes = await app.request(
+      `${base}/drive/v3/files?q=${encodeURIComponent(`name = 'Launch Plan' and mimeType = 'application/vnd.google-apps.document' and trashed = false`)}`,
+      { headers: authHeaders() },
+    );
+    const drive = (await driveRes.json()) as { files: Array<{ id: string; name: string }> };
+    expect(drive.files).toEqual([expect.objectContaining({ id: created.documentId, name: "Launch Plan" })]);
+  });
+
+  it("reads seeded Sheets and supports value writes, appends, and sheet renames", async () => {
+    const seededRes = await app.request(`${base}/v4/spreadsheets/sheet_tracker/values/Bugs!A1:B2`, {
+      headers: authHeaders(),
+    });
+    expect(seededRes.status).toBe(200);
+    expect(await seededRes.json()).toMatchObject({
+      range: "Bugs!A1:B2",
+      values: [
+        ["ID", "Status"],
+        ["BUG-1", "Open"],
+      ],
+    });
+
+    const createRes = await jsonRequest(app, "/v4/spreadsheets", {
+      method: "POST",
+      body: { properties: { title: "QA Results" } },
+    });
+    expect(createRes.status).toBe(200);
+    const created = (await createRes.json()) as {
+      spreadsheetId: string;
+      sheets: Array<{ properties: { sheetId: number; title: string } }>;
+    };
+
+    const writeRes = await jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}/values/Sheet1!A1:B2`, {
+      method: "PUT",
+      body: {
+        values: [
+          ["Case", "Result"],
+          ["QA-1", "Pass"],
+        ],
+      },
+    });
+    expect(writeRes.status).toBe(200);
+    expect(await writeRes.json()).toMatchObject({ updatedRows: 2, updatedColumns: 2, updatedCells: 4 });
+
+    const appendRes = await jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}/values/Sheet1:append`, {
+      method: "POST",
+      body: { values: [["QA-2", "Fail"]] },
+    });
+    expect(appendRes.status).toBe(200);
+
+    const renameRes = await jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          {
+            updateSheetProperties: {
+              properties: { sheetId: created.sheets[0].properties.sheetId, title: "Results" },
+              fields: "title",
+            },
+          },
+        ],
+      },
+    });
+    expect(renameRes.status).toBe(200);
+
+    const readRes = await app.request(`${base}/v4/spreadsheets/${created.spreadsheetId}/values/Results!A1:B3`, {
+      headers: authHeaders(),
+    });
+    expect(readRes.status).toBe(200);
+    expect(await readRes.json()).toMatchObject({
+      values: [
+        ["Case", "Result"],
+        ["QA-1", "Pass"],
+        ["QA-2", "Fail"],
+      ],
+    });
   });
 });
