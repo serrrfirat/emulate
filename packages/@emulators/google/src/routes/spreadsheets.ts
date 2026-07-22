@@ -139,9 +139,12 @@ export function spreadsheetRoutes({ app, store }: RouteContext): void {
       return c.json({ spreadsheetId: resolved.spreadsheet.google_id, clearedRange: range });
     }
 
-    const existing = readSheetValues(parsed);
-    const appendRow = parsed.startRow + existing.length;
-    const appendRange = { ...parsed, startRow: appendRow };
+    const tableRange = range.includes(":")
+      ? parsed
+      : { ...parsed, endRow: undefined, endColumn: undefined };
+    const existing = readSheetValues(tableRange);
+    const appendRow = tableRange.startRow + existing.length;
+    const appendRange = { ...tableRange, startRow: appendRow };
     const values = getValues(body);
     if (!valuesFitRange(appendRange, values)) return invalidRange(c, range);
     const result = writeSheetValues(gs, resolved.spreadsheet, appendRange, values);

@@ -1287,7 +1287,7 @@ describe("Google plugin integration", () => {
     expect(writeRes.status).toBe(200);
     expect(await writeRes.json()).toMatchObject({ updatedRows: 2, updatedColumns: 2, updatedCells: 4 });
 
-    const appendRes = await jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}/values/Sheet1:append`, {
+    const appendRes = await jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}/values/Sheet1!A1:append`, {
       method: "POST",
       body: { values: [["QA-2", "Fail"]] },
     });
