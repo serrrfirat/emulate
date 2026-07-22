@@ -60,6 +60,29 @@ describe("Slack plugin - auth.test", () => {
   });
 });
 
+describe("Slack plugin - Web API GET compatibility", () => {
+  it("accepts query parameters for read methods", async () => {
+    const { app } = createTestApp();
+    const paths = [
+      "auth.test",
+      "users.list?limit=10",
+      "users.info?user=U000000001",
+      "conversations.list?types=public_channel&limit=10",
+      "conversations.info?channel=C000000001",
+      "conversations.history?channel=C000000001&limit=10",
+      "conversations.replies?channel=C000000001&ts=1.000001&limit=10",
+    ];
+
+    for (const path of paths) {
+      const response = await app.request(`${base}/api/${path}`, {
+        headers: authHeaders(),
+      });
+      expect(response.status, path).toBe(200);
+      expect((await response.json()) as any, path).toMatchObject({ ok: true });
+    }
+  });
+});
+
 describe("Slack plugin - search.messages", () => {
   let app: SlackTestApp["app"];
   let store: Store;

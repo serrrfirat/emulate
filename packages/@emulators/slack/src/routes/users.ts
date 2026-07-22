@@ -19,7 +19,7 @@ export function usersRoutes(ctx: RouteContext): void {
   const getAuthUserId = (authUser: { login: string }) => getAuthSlackUser(authUser)?.user_id ?? authUser.login;
 
   // users.list
-  app.post("/api/users.list", async (c) => {
+  const usersList = async (c: Context) => {
     const authUser = c.get("authUser");
     if (!authUser) return slackError(c, "not_authed");
     const scopeError = requireSlackScopes(c, store, ["users:read"]);
@@ -46,10 +46,12 @@ export function usersRoutes(ctx: RouteContext): void {
       members: page.map((user) => formatUser(user, canExposeEmail(c))),
       response_metadata: { next_cursor: nextCursor },
     });
-  });
+  };
+  app.get("/api/users.list", usersList);
+  app.post("/api/users.list", usersList);
 
   // users.info
-  app.post("/api/users.info", async (c) => {
+  const usersInfo = async (c: Context) => {
     const authUser = c.get("authUser");
     if (!authUser) return slackError(c, "not_authed");
     const scopeError = requireSlackScopes(c, store, ["users:read"]);
@@ -62,7 +64,9 @@ export function usersRoutes(ctx: RouteContext): void {
     if (!user) return slackError(c, "user_not_found");
 
     return slackOk(c, { user: formatUser(user, canExposeEmail(c)) });
-  });
+  };
+  app.get("/api/users.info", usersInfo);
+  app.post("/api/users.info", usersInfo);
 
   // users.lookupByEmail
   app.post("/api/users.lookupByEmail", async (c) => {
