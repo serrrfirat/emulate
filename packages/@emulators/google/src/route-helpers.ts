@@ -103,6 +103,11 @@ export function getRecordArray(body: Record<string, unknown>, ...fields: string[
   return [];
 }
 
+export function getFiniteNumber(body: Record<string, unknown>, field: string): number | undefined {
+  const value = body[field];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 export function parseMessageInputFromBody(
   body: Record<string, unknown>,
   defaults?: { from?: string },

@@ -164,7 +164,6 @@ export interface GoogleDriveItem extends Entity {
 export interface GoogleDocument extends Entity {
   google_id: string;
   user_email: string;
-  title: string;
   body: string;
   revision_id: string;
 }
@@ -181,6 +180,5 @@ export interface GoogleSheet {
 export interface GoogleSpreadsheet extends Entity {
   google_id: string;
   user_email: string;
-  title: string;
   sheets: GoogleSheet[];
 }

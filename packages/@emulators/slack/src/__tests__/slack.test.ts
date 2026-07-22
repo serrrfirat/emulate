@@ -144,6 +144,48 @@ describe("Slack plugin - search.messages", () => {
     const res = await app.request(`${base}/api/search.messages?query=release`, { headers: authHeaders() });
     expect(await res.json()).toMatchObject({ ok: false, error: "missing_scope", needed: "search:read" });
   });
+
+  it("paginates and sorts multiple matches while clamping count and page", async () => {
+    for (const text of ["pagination marker one", "pagination marker two", "pagination marker three"]) {
+      await app.request(`${base}/api/chat.postMessage`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ channel: "general", text }),
+      });
+    }
+
+    const pageRes = await app.request(
+      `${base}/api/search.messages?query=${encodeURIComponent("pagination marker")}&count=2&page=2&sort_dir=asc`,
+      { headers: authHeaders() },
+    );
+    const page = (await pageRes.json()) as any;
+    expect(page.messages.paging).toMatchObject({ count: 2, total: 3, page: 2, pages: 2 });
+    expect(page.messages.matches).toHaveLength(1);
+    expect(page.messages.matches[0].text).toBe("pagination marker three");
+
+    const lowCountRes = await app.request(`${base}/api/search.messages?query=release&count=0`, {
+      headers: authHeaders(),
+    });
+    expect(await lowCountRes.json()).toMatchObject({ messages: { paging: { count: 1 } } });
+    const highCountRes = await app.request(`${base}/api/search.messages?query=release&count=500&page=1000`, {
+      headers: authHeaders(),
+    });
+    expect(await highCountRes.json()).toMatchObject({ messages: { paging: { count: 100, page: 100 } } });
+  });
+
+  it("accepts POST search parameters", async () => {
+    const res = await app.request(`${base}/api/search.messages`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ query: "release", count: 1, page: 1, sort_dir: "asc" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.ok).toBe(true);
+    expect(body.query).toBe("release");
+    expect(body.messages.paging).toMatchObject({ count: 1, page: 1, pages: 2 });
+    expect(body.messages.matches).toHaveLength(1);
+  });
 });
 
 describe("Slack plugin - chat.postMessage", () => {

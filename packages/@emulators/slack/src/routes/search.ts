@@ -10,6 +10,13 @@ interface SearchInput {
   sortDirection: string;
 }
 
+interface SearchMatch {
+  message: SlackMessage;
+  channel: SlackChannel;
+}
+
+const MAX_SEARCH_PAGE = 100;
+
 export function searchRoutes({ app, store, baseUrl }: RouteContext): void {
   const handleSearch = async (c: Context) => {
     const authUser = c.get("authUser");
@@ -25,17 +32,20 @@ export function searchRoutes({ app, store, baseUrl }: RouteContext): void {
     const currentUserId = currentUser?.user_id ?? authUser.login;
     const parsedQuery = parseSearchQuery(input.query, ss.users.all(), ss.channels.all(), currentUserId);
 
-    const matches = ss.messages
-      .all()
-      .flatMap((message) => {
-        const channel = ss.channels.findOneBy("channel_id", message.channel_id);
-        if (!channel || !canSearchChannel(channel, currentUserId)) return [];
-        if (!matchesQuery(message, channel, parsedQuery)) return [];
-        return [{ message, channel }];
-      })
-      .sort((left, right) => compareMatches(left.message, right.message, input.sortDirection));
+    const compare = (left: SearchMatch, right: SearchMatch) =>
+      compareMatches(left.message, right.message, input.sortDirection);
+    const windowEnd = input.page * input.count;
+    const matches: SearchMatch[] = [];
+    let total = 0;
+    for (const message of ss.messages.all()) {
+      const channel = ss.channels.findOneBy("channel_id", message.channel_id);
+      if (!channel || !canSearchChannel(channel, currentUserId)) continue;
+      if (!matchesQuery(message, channel, parsedQuery)) continue;
+      total += 1;
+      pushBoundedMatch(matches, { message, channel }, windowEnd, compare);
+    }
+    matches.sort(compare);
 
-    const total = matches.length;
     const start = (input.page - 1) * input.count;
     const pageMatches = matches.slice(start, start + input.count).map(({ message, channel }) => {
       const user = findUser(ss.users.all(), message.user);
@@ -83,7 +93,7 @@ async function parseSearchInput(c: Context): Promise<SearchInput> {
   return {
     query: value("query"),
     count: clampInteger(value("count"), 20, 1, 100),
-    page: clampInteger(value("page"), 1, 1, Number.MAX_SAFE_INTEGER),
+    page: clampInteger(value("page"), 1, 1, MAX_SEARCH_PAGE),
     sortDirection: value("sort_dir") || "desc",
   };
 }
@@ -141,6 +151,55 @@ function findUser(users: SlackUser[], reference: string): SlackUser | undefined 
 function compareMatches(left: SlackMessage, right: SlackMessage, direction: string): number {
   const result = Number.parseFloat(left.ts) - Number.parseFloat(right.ts);
   return direction.toLowerCase() === "asc" ? result : -result;
+}
+
+function pushBoundedMatch(
+  heap: SearchMatch[],
+  match: SearchMatch,
+  limit: number,
+  compare: (left: SearchMatch, right: SearchMatch) => number,
+): void {
+  if (limit <= 0) return;
+  if (heap.length < limit) {
+    heap.push(match);
+    siftWorstUp(heap, heap.length - 1, compare);
+    return;
+  }
+  if (compare(match, heap[0]) >= 0) return;
+  heap[0] = match;
+  siftWorstDown(heap, 0, compare);
+}
+
+function siftWorstUp(
+  heap: SearchMatch[],
+  start: number,
+  compare: (left: SearchMatch, right: SearchMatch) => number,
+): void {
+  let index = start;
+  while (index > 0) {
+    const parent = Math.floor((index - 1) / 2);
+    if (compare(heap[index], heap[parent]) <= 0) break;
+    [heap[index], heap[parent]] = [heap[parent], heap[index]];
+    index = parent;
+  }
+}
+
+function siftWorstDown(
+  heap: SearchMatch[],
+  start: number,
+  compare: (left: SearchMatch, right: SearchMatch) => number,
+): void {
+  let index = start;
+  while (true) {
+    const left = index * 2 + 1;
+    const right = left + 1;
+    let worst = index;
+    if (left < heap.length && compare(heap[left], heap[worst]) > 0) worst = left;
+    if (right < heap.length && compare(heap[right], heap[worst]) > 0) worst = right;
+    if (worst === index) return;
+    [heap[index], heap[worst]] = [heap[worst], heap[index]];
+    index = worst;
+  }
 }
 
 function clampInteger(value: string, fallback: number, minimum: number, maximum: number): number {

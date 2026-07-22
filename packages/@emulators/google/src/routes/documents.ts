@@ -6,7 +6,14 @@ import {
   updateDocumentBody,
 } from "../document-helpers.js";
 import { googleApiError } from "../helpers.js";
-import { getRecordArray, getString, parseGoogleBody, requireGoogleAuth } from "../route-helpers.js";
+import {
+  getFiniteNumber,
+  getRecord,
+  getRecordArray,
+  getString,
+  parseGoogleBody,
+  requireGoogleAuth,
+} from "../route-helpers.js";
 import { getGoogleStore } from "../store.js";
 
 export function documentRoutes({ app, store }: RouteContext): void {
@@ -24,6 +31,7 @@ export function documentRoutes({ app, store }: RouteContext): void {
 
     return c.json(
       formatDocumentResource(
+        gs,
         createDocumentRecord(gs, {
           user_email: authEmail,
           title,
@@ -41,33 +49,39 @@ export function documentRoutes({ app, store }: RouteContext): void {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
 
-    return c.json(formatDocumentResource(document));
+    return c.json(formatDocumentResource(gs, document));
   });
 
   app.post("/v1/documents/:documentId{[^:]+}:batchUpdate", async (c) => {
     const authEmail = requireGoogleAuth(c);
     if (authEmail instanceof Response) return authEmail;
 
+    const body = await parseGoogleBody(c);
     const document = getDocumentById(gs, authEmail, c.req.param("documentId"));
     if (!document) {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
 
-    const body = await parseGoogleBody(c);
+    const writeControl = getRecord(body, "writeControl");
+    const requiredRevisionId = writeControl ? getString(writeControl, "requiredRevisionId") : undefined;
+    if (requiredRevisionId && requiredRevisionId !== document.revision_id) {
+      return googleApiError(c, 400, "The document revision does not match.", "badRequest", "FAILED_PRECONDITION");
+    }
+
     const requests = getRecordArray(body, "requests");
     let text = document.body;
     const replies: Record<string, unknown>[] = [];
 
     for (const request of requests) {
-      const insertText = asRecord(request.insertText);
+      const insertText = getRecord(request, "insertText");
       if (insertText) {
         const value = getString(insertText, "text") ?? "";
-        const location = asRecord(insertText.location);
-        const endOfSegmentLocation = asRecord(insertText.endOfSegmentLocation);
+        const location = getRecord(insertText, "location");
+        const endOfSegmentLocation = getRecord(insertText, "endOfSegmentLocation");
         if (endOfSegmentLocation) {
           text += value;
         } else if (location) {
-          const index = numberField(location, "index");
+          const index = getFiniteNumber(location, "index");
           if (index === undefined || index < 1 || index > text.length + 1) {
             return googleApiError(c, 400, "Invalid insertText location.", "badRequest", "INVALID_ARGUMENT");
           }
@@ -80,11 +94,11 @@ export function documentRoutes({ app, store }: RouteContext): void {
         continue;
       }
 
-      const deleteContentRange = asRecord(request.deleteContentRange);
+      const deleteContentRange = getRecord(request, "deleteContentRange");
       if (deleteContentRange) {
-        const range = asRecord(deleteContentRange.range);
-        const startIndex = range ? numberField(range, "startIndex") : undefined;
-        const endIndex = range ? numberField(range, "endIndex") : undefined;
+        const range = getRecord(deleteContentRange, "range");
+        const startIndex = range ? getFiniteNumber(range, "startIndex") : undefined;
+        const endIndex = range ? getFiniteNumber(range, "endIndex") : undefined;
         if (
           startIndex === undefined ||
           endIndex === undefined ||
@@ -99,9 +113,9 @@ export function documentRoutes({ app, store }: RouteContext): void {
         continue;
       }
 
-      const replaceAllText = asRecord(request.replaceAllText);
+      const replaceAllText = getRecord(request, "replaceAllText");
       if (replaceAllText) {
-        const containsText = asRecord(replaceAllText.containsText);
+        const containsText = getRecord(replaceAllText, "containsText");
         const find = containsText ? getString(containsText, "text") : undefined;
         const replacement = getString(replaceAllText, "replaceText") ?? "";
         if (!find) {
@@ -111,7 +125,7 @@ export function documentRoutes({ app, store }: RouteContext): void {
         const flags = matchCase ? "g" : "gi";
         const pattern = new RegExp(escapeRegExp(find), flags);
         const occurrencesChanged = Array.from(text.matchAll(pattern)).length;
-        text = text.replace(pattern, replacement);
+        text = text.replace(pattern, () => replacement);
         replies.push({ replaceAllText: { occurrencesChanged } });
         continue;
       }
@@ -136,15 +150,6 @@ export function documentRoutes({ app, store }: RouteContext): void {
       writeControl: { requiredRevisionId: updated.revision_id },
     });
   });
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-}
-
-function numberField(value: Record<string, unknown>, field: string): number | undefined {
-  const fieldValue = value[field];
-  return typeof fieldValue === "number" && Number.isFinite(fieldValue) ? fieldValue : undefined;
 }
 
 function escapeRegExp(value: string): string {

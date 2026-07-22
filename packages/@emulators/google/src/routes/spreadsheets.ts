@@ -1,6 +1,13 @@
 import type { Context, RouteContext } from "@emulators/core";
 import { googleApiError } from "../helpers.js";
-import { getRecord, getRecordArray, getString, parseGoogleBody, requireGoogleAuth } from "../route-helpers.js";
+import {
+  getFiniteNumber,
+  getRecord,
+  getRecordArray,
+  getString,
+  parseGoogleBody,
+  requireGoogleAuth,
+} from "../route-helpers.js";
 import {
   clearSheetValues,
   createSpreadsheetRecord,
@@ -9,6 +16,7 @@ import {
   parseSheetRange,
   readSheetValues,
   updateSpreadsheetSheets,
+  valuesFitRange,
   writeSheetValues,
 } from "../spreadsheet-helpers.js";
 import { getGoogleStore } from "../store.js";
@@ -26,19 +34,41 @@ export function spreadsheetRoutes({ app, store }: RouteContext): void {
       return googleApiError(c, 400, "Spreadsheet title is required.", "badRequest", "INVALID_ARGUMENT");
     }
 
-    const sheets = getRecordArray(body, "sheets").map((sheet, index) => {
+    const sheetInputs = getRecordArray(body, "sheets");
+    const sheets = [];
+    const usedSheetIds = new Set<number>();
+    const usedSheetTitles = new Set<string>();
+    for (const [index, sheet] of sheetInputs.entries()) {
       const sheetProperties = getRecord(sheet, "properties") ?? {};
       const gridProperties = getRecord(sheetProperties, "gridProperties") ?? {};
-      return {
-        id: getFiniteNumber(sheetProperties, "sheetId") ?? index,
-        title: getString(sheetProperties, "title") ?? `Sheet${index + 1}`,
-        row_count: getFiniteNumber(gridProperties, "rowCount"),
-        column_count: getFiniteNumber(gridProperties, "columnCount"),
-      };
-    });
+      const requestedSheetId = getFiniteNumber(sheetProperties, "sheetId");
+      if (
+        requestedSheetId !== undefined &&
+        (!Number.isSafeInteger(requestedSheetId) || usedSheetIds.has(requestedSheetId))
+      ) {
+        return googleApiError(c, 400, "Sheet ID already exists or is invalid.", "badRequest", "INVALID_ARGUMENT");
+      }
+      const sheetId = requestedSheetId ?? nextSheetId([...usedSheetIds]);
+      const sheetTitle = getString(sheetProperties, "title") ?? `Sheet${index + 1}`;
+      if (!sheetTitle.trim() || usedSheetTitles.has(sheetTitle)) {
+        return googleApiError(c, 400, "Sheet title already exists or is invalid.", "badRequest", "INVALID_ARGUMENT");
+      }
+      const rowCount = getFiniteNumber(gridProperties, "rowCount");
+      const columnCount = getFiniteNumber(gridProperties, "columnCount");
+      if (
+        (rowCount !== undefined && !isValidGridSize(rowCount)) ||
+        (columnCount !== undefined && !isValidGridSize(columnCount))
+      ) {
+        return googleApiError(c, 400, "Sheet grid size is invalid.", "badRequest", "INVALID_ARGUMENT");
+      }
+      usedSheetIds.add(sheetId);
+      usedSheetTitles.add(sheetTitle);
+      sheets.push({ id: sheetId, title: sheetTitle, row_count: rowCount, column_count: columnCount });
+    }
 
     return c.json(
       formatSpreadsheetResource(
+        gs,
         createSpreadsheetRecord(gs, {
           user_email: authEmail,
           title,
@@ -73,13 +103,14 @@ export function spreadsheetRoutes({ app, store }: RouteContext): void {
   });
 
   app.put("/v4/spreadsheets/:spreadsheetId/values/:range{.+}", async (c) => {
+    const body = await parseGoogleBody(c);
     const resolved = resolveSpreadsheet(c, gs);
     if (resolved instanceof Response) return resolved;
     const range = c.req.param("range");
     const parsed = parseSheetRange(resolved.spreadsheet, range);
     if (!parsed) return invalidRange(c, range);
-    const body = await parseGoogleBody(c);
     const values = getValues(body);
+    if (!valuesFitRange(parsed, values)) return invalidRange(c, range);
     const result = writeSheetValues(gs, resolved.spreadsheet, parsed, values);
     return c.json({
       spreadsheetId: result.spreadsheet.google_id,
@@ -91,6 +122,7 @@ export function spreadsheetRoutes({ app, store }: RouteContext): void {
   });
 
   app.post("/v4/spreadsheets/:spreadsheetId/values/:operation{.+}", async (c) => {
+    const body = await parseGoogleBody(c);
     const resolved = resolveSpreadsheet(c, gs);
     if (resolved instanceof Response) return resolved;
     const operation = c.req.param("operation");
@@ -109,12 +141,10 @@ export function spreadsheetRoutes({ app, store }: RouteContext): void {
 
     const existing = readSheetValues(parsed);
     const appendRow = parsed.startRow + existing.length;
-    const result = writeSheetValues(
-      gs,
-      resolved.spreadsheet,
-      { ...parsed, startRow: appendRow },
-      getValues(await parseGoogleBody(c)),
-    );
+    const appendRange = { ...parsed, startRow: appendRow };
+    const values = getValues(body);
+    if (!valuesFitRange(appendRange, values)) return invalidRange(c, range);
+    const result = writeSheetValues(gs, resolved.spreadsheet, appendRange, values);
     return c.json({
       spreadsheetId: result.spreadsheet.google_id,
       tableRange: range,
@@ -129,9 +159,9 @@ export function spreadsheetRoutes({ app, store }: RouteContext): void {
   });
 
   app.post("/v4/spreadsheets/:spreadsheetId{[^:]+}:batchUpdate", async (c) => {
+    const body = await parseGoogleBody(c);
     const resolved = resolveSpreadsheet(c, gs);
     if (resolved instanceof Response) return resolved;
-    const body = await parseGoogleBody(c);
     let spreadsheet = resolved.spreadsheet;
     let sheets = spreadsheet.sheets.map((sheet) => ({ ...sheet, values: sheet.values.map((row) => [...row]) }));
     const replies: Record<string, unknown>[] = [];
@@ -142,16 +172,27 @@ export function spreadsheetRoutes({ app, store }: RouteContext): void {
         const properties = getRecord(addSheet, "properties") ?? {};
         const grid = getRecord(properties, "gridProperties") ?? {};
         const sheetId = getFiniteNumber(properties, "sheetId") ?? nextSheetId(sheets.map((sheet) => sheet.sheet_id));
-        if (sheets.some((sheet) => sheet.sheet_id === sheetId)) {
+        if (!Number.isSafeInteger(sheetId) || sheets.some((sheet) => sheet.sheet_id === sheetId)) {
           return googleApiError(c, 400, "Sheet ID already exists.", "badRequest", "INVALID_ARGUMENT");
         }
         const title = getString(properties, "title") ?? `Sheet${sheets.length + 1}`;
+        if (!title.trim() || sheets.some((sheet) => sheet.title === title)) {
+          return googleApiError(c, 400, "Sheet title already exists or is invalid.", "badRequest", "INVALID_ARGUMENT");
+        }
+        const rowCount = getFiniteNumber(grid, "rowCount");
+        const columnCount = getFiniteNumber(grid, "columnCount");
+        if (
+          (rowCount !== undefined && !isValidGridSize(rowCount)) ||
+          (columnCount !== undefined && !isValidGridSize(columnCount))
+        ) {
+          return googleApiError(c, 400, "Sheet grid size is invalid.", "badRequest", "INVALID_ARGUMENT");
+        }
         sheets.push({
           sheet_id: sheetId,
           title,
           index: sheets.length,
-          row_count: getFiniteNumber(grid, "rowCount") ?? 1000,
-          column_count: getFiniteNumber(grid, "columnCount") ?? 26,
+          row_count: rowCount ?? 1000,
+          column_count: columnCount ?? 26,
           values: [],
         });
         replies.push({ addSheet: { properties: { sheetId, title, index: sheets.length - 1 } } });
@@ -176,6 +217,9 @@ export function spreadsheetRoutes({ app, store }: RouteContext): void {
         const sheet = sheets.find((candidate) => candidate.sheet_id === sheetId);
         if (!sheet) return googleApiError(c, 400, "Sheet was not found.", "badRequest", "INVALID_ARGUMENT");
         const title = getString(properties, "title");
+        if (title && sheets.some((candidate) => candidate.sheet_id !== sheet.sheet_id && candidate.title === title)) {
+          return googleApiError(c, 400, "Sheet title already exists.", "badRequest", "INVALID_ARGUMENT");
+        }
         if (title) sheet.title = title;
         replies.push({ updateSheetProperties: { properties: { sheetId: sheet.sheet_id, title: sheet.title } } });
         continue;
@@ -196,7 +240,7 @@ export function spreadsheetRoutes({ app, store }: RouteContext): void {
   app.get("/v4/spreadsheets/:spreadsheetId", (c) => {
     const resolved = resolveSpreadsheet(c, gs);
     if (resolved instanceof Response) return resolved;
-    return c.json(formatSpreadsheetResource(resolved.spreadsheet));
+    return c.json(formatSpreadsheetResource(gs, resolved.spreadsheet));
   });
 }
 
@@ -212,11 +256,6 @@ function getValues(body: Record<string, unknown>): unknown[][] {
   return Array.isArray(body.values) ? body.values.map((row) => (Array.isArray(row) ? row : [row])) : [];
 }
 
-function getFiniteNumber(value: Record<string, unknown>, key: string): number | undefined {
-  const candidate = value[key];
-  return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : undefined;
-}
-
 function formatValueRange(range: string, values: unknown[][]) {
   return { range, majorDimension: "ROWS", values };
 }
@@ -227,4 +266,8 @@ function invalidRange(c: Context, range: string) {
 
 function nextSheetId(sheetIds: number[]): number {
   return Math.max(-1, ...sheetIds) + 1;
+}
+
+function isValidGridSize(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
 }

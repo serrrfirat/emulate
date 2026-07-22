@@ -1,9 +1,10 @@
-import { createDriveItemRecord } from "./drive-helpers.js";
+import { createDriveItemRecord, getDriveItemById } from "./drive-helpers.js";
 import type { GoogleSheet, GoogleSpreadsheet } from "./entities.js";
 import { generateUid } from "./helpers.js";
 import type { GoogleStore } from "./store.js";
 
 export const GOOGLE_SPREADSHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet";
+const MAX_RANGE_CELLS = 100_000;
 
 export interface GoogleSpreadsheetInput {
   google_id?: string;
@@ -32,20 +33,20 @@ export function createSpreadsheetRecord(gs: GoogleStore, input: GoogleSpreadshee
   if (existing) return existing;
 
   const requestedSheets = input.sheets?.length ? input.sheets : [{ title: "Sheet1" }];
-  const sheets = requestedSheets.map((sheet, index) => ({
-    sheet_id: sheet.id ?? index,
-    title: sheet.title,
-    index,
-    row_count: sheet.row_count ?? 1000,
-    column_count: sheet.column_count ?? 26,
-    values: cloneValues(sheet.values ?? []),
-  }));
-
-  const spreadsheet = gs.spreadsheets.insert({
-    google_id: spreadsheetId,
-    user_email: input.user_email,
-    title: input.title,
-    sheets,
+  const usedSheetIds = new Set<number>();
+  const sheets = requestedSheets.map((sheet, index) => {
+    const requestedId = sheet.id;
+    const sheetId =
+      requestedId !== undefined && !usedSheetIds.has(requestedId) ? requestedId : nextAvailableId(usedSheetIds);
+    usedSheetIds.add(sheetId);
+    return {
+      sheet_id: sheetId,
+      title: sheet.title,
+      index,
+      row_count: normalizeGridSize(sheet.row_count, 1000),
+      column_count: normalizeGridSize(sheet.column_count, 26),
+      values: cloneValues(sheet.values ?? []),
+    };
   });
 
   createDriveItemRecord(gs, {
@@ -56,7 +57,11 @@ export function createSpreadsheetRecord(gs: GoogleStore, input: GoogleSpreadshee
     parent_google_ids: ["root"],
   });
 
-  return spreadsheet;
+  return gs.spreadsheets.insert({
+    google_id: spreadsheetId,
+    user_email: input.user_email,
+    sheets,
+  });
 }
 
 export function getSpreadsheetById(
@@ -67,10 +72,11 @@ export function getSpreadsheetById(
   return gs.spreadsheets.findBy("user_email", userEmail).find((spreadsheet) => spreadsheet.google_id === spreadsheetId);
 }
 
-export function formatSpreadsheetResource(spreadsheet: GoogleSpreadsheet) {
+export function formatSpreadsheetResource(gs: GoogleStore, spreadsheet: GoogleSpreadsheet) {
+  const driveItem = getDriveItemById(gs, spreadsheet.user_email, spreadsheet.google_id);
   return {
     spreadsheetId: spreadsheet.google_id,
-    properties: { title: spreadsheet.title },
+    properties: { title: driveItem?.name ?? "Untitled" },
     spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheet.google_id}/edit`,
     sheets: spreadsheet.sheets.map((sheet) => ({
       properties: {
@@ -106,13 +112,40 @@ export function parseSheetRange(spreadsheet: GoogleSpreadsheet, range: string): 
   const end = endText ? parseCellReference(endText, true) : start;
   if (!start || !end) return undefined;
 
+  const startRow = start.row ?? 0;
+  const startColumn = start.column ?? 0;
+  if (
+    startRow >= sheet.row_count ||
+    startColumn >= sheet.column_count ||
+    (end.row !== undefined && (end.row < startRow || end.row >= sheet.row_count)) ||
+    (end.column !== undefined && (end.column < startColumn || end.column >= sheet.column_count)) ||
+    !rangeFitsCellLimit(startRow, startColumn, end.row, end.column)
+  ) {
+    return undefined;
+  }
+
   return {
     sheet,
-    startRow: start.row ?? 0,
-    startColumn: start.column ?? 0,
+    startRow,
+    startColumn,
     endRow: end.row,
     endColumn: end.column,
   };
+}
+
+export function valuesFitRange(parsed: ParsedSheetRange, values: unknown[][]): boolean {
+  const rows = values.length;
+  const columns = Math.max(0, ...values.map((row) => row.length));
+  if (rows === 0 || columns === 0) return true;
+  const finalRow = parsed.startRow + rows - 1;
+  const finalColumn = parsed.startColumn + columns - 1;
+  return (
+    finalRow < parsed.sheet.row_count &&
+    finalColumn < parsed.sheet.column_count &&
+    (parsed.endRow === undefined || finalRow <= parsed.endRow) &&
+    (parsed.endColumn === undefined || finalColumn <= parsed.endColumn) &&
+    rows * columns <= MAX_RANGE_CELLS
+  );
 }
 
 export function readSheetValues(parsed: ParsedSheetRange): unknown[][] {
@@ -214,8 +247,8 @@ function parseCellReference(value: string, isEnd: boolean): { row?: number; colu
   if (!match || (!match[1] && !match[2])) return undefined;
   const column = match[1] ? columnToIndex(match[1]) : undefined;
   const row = match[2] ? Number.parseInt(match[2], 10) - 1 : undefined;
-  if (column !== undefined && column < 0) return undefined;
-  if (row !== undefined && row < 0) return undefined;
+  if (column !== undefined && (!Number.isSafeInteger(column) || column < 0)) return undefined;
+  if (row !== undefined && (!Number.isSafeInteger(row) || row < 0)) return undefined;
   return {
     row: row === undefined && !isEnd ? 0 : row,
     column: column === undefined && !isEnd ? 0 : column,
@@ -228,6 +261,21 @@ function columnToIndex(value: string): number {
     result = result * 26 + character.charCodeAt(0) - 64;
   }
   return result - 1;
+}
+
+function rangeFitsCellLimit(startRow: number, startColumn: number, endRow?: number, endColumn?: number): boolean {
+  if (endRow === undefined || endColumn === undefined) return true;
+  return (endRow - startRow + 1) * (endColumn - startColumn + 1) <= MAX_RANGE_CELLS;
+}
+
+function normalizeGridSize(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function nextAvailableId(usedIds: Set<number>): number {
+  let candidate = 0;
+  while (usedIds.has(candidate)) candidate += 1;
+  return candidate;
 }
 
 function maxColumn(values: unknown[][]): number {

@@ -1,4 +1,4 @@
-import { createDriveItemRecord } from "./drive-helpers.js";
+import { createDriveItemRecord, getDriveItemById } from "./drive-helpers.js";
 import type { GoogleDocument } from "./entities.js";
 import { generateUid } from "./helpers.js";
 import type { GoogleStore } from "./store.js";
@@ -17,14 +17,6 @@ export function createDocumentRecord(gs: GoogleStore, input: GoogleDocumentInput
   const existing = getDocumentById(gs, input.user_email, documentId);
   if (existing) return existing;
 
-  const document = gs.documents.insert({
-    google_id: documentId,
-    user_email: input.user_email,
-    title: input.title,
-    body: input.body ?? "",
-    revision_id: "1",
-  });
-
   createDriveItemRecord(gs, {
     google_id: documentId,
     user_email: input.user_email,
@@ -33,7 +25,12 @@ export function createDocumentRecord(gs: GoogleStore, input: GoogleDocumentInput
     parent_google_ids: ["root"],
   });
 
-  return document;
+  return gs.documents.insert({
+    google_id: documentId,
+    user_email: input.user_email,
+    body: input.body ?? "",
+    revision_id: "1",
+  });
 }
 
 export function getDocumentById(gs: GoogleStore, userEmail: string, documentId: string): GoogleDocument | undefined {
@@ -50,7 +47,8 @@ export function updateDocumentBody(gs: GoogleStore, document: GoogleDocument, bo
   );
 }
 
-export function formatDocumentResource(document: GoogleDocument) {
+export function formatDocumentResource(gs: GoogleStore, document: GoogleDocument) {
+  const driveItem = getDriveItemById(gs, document.user_email, document.google_id);
   const startIndex = 1;
   const endIndex = startIndex + document.body.length;
   const content = document.body
@@ -73,7 +71,7 @@ export function formatDocumentResource(document: GoogleDocument) {
 
   return {
     documentId: document.google_id,
-    title: document.title,
+    title: driveItem?.name ?? "Untitled",
     revisionId: document.revision_id,
     body: { content },
   };

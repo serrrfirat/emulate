@@ -1138,6 +1138,7 @@ describe("Google plugin integration", () => {
     const updateRes = await jsonRequest(app, `/v1/documents/${created.documentId}:batchUpdate`, {
       method: "POST",
       body: {
+        writeControl: { requiredRevisionId: created.revisionId },
         requests: [
           { insertText: { endOfSegmentLocation: {}, text: "Ship on Friday.\n" } },
           { replaceAllText: { containsText: { text: "Friday", matchCase: true }, replaceText: "Monday" } },
@@ -1152,6 +1153,15 @@ describe("Google plugin integration", () => {
     expect(update.replies[1].replaceAllText?.occurrencesChanged).toBe(1);
     expect(update.writeControl.requiredRevisionId).not.toBe(created.revisionId);
 
+    const staleUpdateRes = await jsonRequest(app, `/v1/documents/${created.documentId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        writeControl: { requiredRevisionId: created.revisionId },
+        requests: [{ insertText: { endOfSegmentLocation: {}, text: "stale" } }],
+      },
+    });
+    expect(staleUpdateRes.status).toBe(400);
+
     const readRes = await app.request(`${base}/v1/documents/${created.documentId}`, { headers: authHeaders() });
     expect(readRes.status).toBe(200);
     const document = (await readRes.json()) as {
@@ -1165,6 +1175,81 @@ describe("Google plugin integration", () => {
     );
     const drive = (await driveRes.json()) as { files: Array<{ id: string; name: string }> };
     expect(drive.files).toEqual([expect.objectContaining({ id: created.documentId, name: "Launch Plan" })]);
+
+    const renameRes = await jsonRequest(app, `/drive/v3/files/${created.documentId}`, {
+      method: "PATCH",
+      body: { name: "Launch Plan Revised" },
+    });
+    expect(renameRes.status).toBe(200);
+    const renamedDocumentRes = await app.request(`${base}/v1/documents/${created.documentId}`, {
+      headers: authHeaders(),
+    });
+    expect(await renamedDocumentRes.json()).toMatchObject({ title: "Launch Plan Revised" });
+  });
+
+  it("applies document deletes and literal replacements and rejects invalid updates", async () => {
+    const createRes = await jsonRequest(app, "/v1/documents", {
+      method: "POST",
+      body: { title: "Validation Plan" },
+    });
+    const created = (await createRes.json()) as { documentId: string };
+
+    const validRes = await jsonRequest(app, `/v1/documents/${created.documentId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          { insertText: { endOfSegmentLocation: {}, text: "abcdef" } },
+          { deleteContentRange: { range: { startIndex: 2, endIndex: 4 } } },
+          { replaceAllText: { containsText: { text: "de", matchCase: true }, replaceText: "$&" } },
+        ],
+      },
+    });
+    expect(validRes.status).toBe(200);
+    const readRes = await app.request(`${base}/v1/documents/${created.documentId}`, { headers: authHeaders() });
+    const document = (await readRes.json()) as {
+      body: { content: Array<{ paragraph: { elements: Array<{ textRun: { content: string } }> } }> };
+    };
+    expect(document.body.content[0].paragraph.elements[0].textRun.content).toBe("a$&f");
+
+    const invalidRequests = [
+      { insertText: { text: "missing location" } },
+      { insertText: { location: { index: 999 }, text: "out of bounds" } },
+      { deleteContentRange: { range: { startIndex: 1, endIndex: 999 } } },
+      { replaceAllText: { containsText: { text: "" }, replaceText: "invalid" } },
+      { insertInlineImage: { uri: "https://example.com/image.png" } },
+    ];
+    for (const request of invalidRequests) {
+      const invalidRes = await jsonRequest(app, `/v1/documents/${created.documentId}:batchUpdate`, {
+        method: "POST",
+        body: { requests: [request] },
+      });
+      expect(invalidRes.status, JSON.stringify(request)).toBe(400);
+    }
+  });
+
+  it("preserves concurrent document updates", async () => {
+    const createRes = await jsonRequest(app, "/v1/documents", {
+      method: "POST",
+      body: { title: "Concurrent Plan" },
+    });
+    const created = (await createRes.json()) as { documentId: string };
+
+    const updates = ["alpha", "beta"].map((text) =>
+      jsonRequest(app, `/v1/documents/${created.documentId}:batchUpdate`, {
+        method: "POST",
+        body: { requests: [{ insertText: { endOfSegmentLocation: {}, text } }] },
+      }),
+    );
+    const responses = await Promise.all(updates);
+    expect(responses.every((response) => response.status === 200)).toBe(true);
+
+    const readRes = await app.request(`${base}/v1/documents/${created.documentId}`, { headers: authHeaders() });
+    const document = (await readRes.json()) as {
+      body: { content: Array<{ paragraph: { elements: Array<{ textRun: { content: string } }> } }> };
+    };
+    const content = document.body.content[0].paragraph.elements[0].textRun.content;
+    expect(content).toContain("alpha");
+    expect(content).toContain("beta");
   });
 
   it("reads seeded Sheets and supports value writes, appends, and sheet renames", async () => {
@@ -1234,5 +1319,234 @@ describe("Google plugin integration", () => {
         ["QA-2", "Fail"],
       ],
     });
+  });
+
+  it("covers Sheets metadata, batch reads, clears, sheet lifecycle, and Drive titles", async () => {
+    const createRes = await jsonRequest(app, "/v4/spreadsheets", {
+      method: "POST",
+      body: {
+        properties: { title: "Coverage Sheet" },
+        sheets: [{ properties: { sheetId: 1, title: "First" } }, { properties: { title: "Second" } }],
+      },
+    });
+    expect(createRes.status).toBe(200);
+    const created = (await createRes.json()) as {
+      spreadsheetId: string;
+      sheets: Array<{ properties: { sheetId: number; title: string } }>;
+    };
+    const createdSheetIds = created.sheets.map((sheet) => sheet.properties.sheetId);
+    expect(createdSheetIds[0]).toBe(1);
+    expect(createdSheetIds[1]).not.toBe(1);
+    expect(new Set(createdSheetIds).size).toBe(2);
+
+    await jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}/values/First!A1:B2`, {
+      method: "PUT",
+      body: {
+        values: [
+          ["one", "two"],
+          ["three", "four"],
+        ],
+      },
+    });
+    const batchGetRes = await app.request(
+      `${base}/v4/spreadsheets/${created.spreadsheetId}/values:batchGet?ranges=First!A1:B1&ranges=First!A2:B2`,
+      { headers: authHeaders() },
+    );
+    expect(batchGetRes.status).toBe(200);
+    expect(await batchGetRes.json()).toMatchObject({
+      valueRanges: [{ values: [["one", "two"]] }, { values: [["three", "four"]] }],
+    });
+
+    const clearRes = await jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}/values/First!A1:B1:clear`, {
+      method: "POST",
+      body: {},
+    });
+    expect(clearRes.status).toBe(200);
+
+    const addRes = await jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}:batchUpdate`, {
+      method: "POST",
+      body: { requests: [{ addSheet: { properties: { sheetId: 7, title: "Temporary" } } }] },
+    });
+    expect(addRes.status).toBe(200);
+    const metadataAfterAddRes = await app.request(`${base}/v4/spreadsheets/${created.spreadsheetId}`, {
+      headers: authHeaders(),
+    });
+    const metadataAfterAdd = (await metadataAfterAddRes.json()) as {
+      sheets: Array<{ properties: { sheetId: number } }>;
+    };
+    expect(metadataAfterAdd.sheets.map((sheet) => sheet.properties.sheetId)).toContain(7);
+
+    const deleteRes = await jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}:batchUpdate`, {
+      method: "POST",
+      body: { requests: [{ deleteSheet: { sheetId: 7 } }] },
+    });
+    expect(deleteRes.status).toBe(200);
+
+    const renameDriveRes = await jsonRequest(app, `/drive/v3/files/${created.spreadsheetId}`, {
+      method: "PATCH",
+      body: { name: "Coverage Sheet Revised" },
+    });
+    expect(renameDriveRes.status).toBe(200);
+    const metadataRes = await app.request(`${base}/v4/spreadsheets/${created.spreadsheetId}`, {
+      headers: authHeaders(),
+    });
+    expect(await metadataRes.json()).toMatchObject({ properties: { title: "Coverage Sheet Revised" } });
+  });
+
+  it("rejects invalid Sheets requests without mutating data", async () => {
+    const missingTitleRes = await jsonRequest(app, "/v4/spreadsheets", {
+      method: "POST",
+      body: { properties: {} },
+    });
+    expect(missingTitleRes.status).toBe(400);
+
+    const duplicateIdRes = await jsonRequest(app, "/v4/spreadsheets", {
+      method: "POST",
+      body: {
+        properties: { title: "Duplicate IDs" },
+        sheets: [{ properties: { sheetId: 1, title: "One" } }, { properties: { sheetId: 1, title: "Two" } }],
+      },
+    });
+    expect(duplicateIdRes.status).toBe(400);
+
+    const duplicateTitleRes = await jsonRequest(app, "/v4/spreadsheets", {
+      method: "POST",
+      body: {
+        properties: { title: "Duplicate Titles" },
+        sheets: [{ properties: { title: "Same" } }, { properties: { title: "Same" } }],
+      },
+    });
+    expect(duplicateTitleRes.status).toBe(400);
+
+    const missingRes = await app.request(`${base}/v4/spreadsheets/missing`, { headers: authHeaders() });
+    expect(missingRes.status).toBe(404);
+
+    const malformedRes = await app.request(`${base}/v4/spreadsheets/sheet_tracker/values/Bugs!A0`, {
+      headers: authHeaders(),
+    });
+    expect(malformedRes.status).toBe(400);
+    const oversizedRes = await app.request(`${base}/v4/spreadsheets/sheet_tracker/values/Bugs!A1:A1000000000`, {
+      headers: authHeaders(),
+    });
+    expect(oversizedRes.status).toBe(400);
+
+    const spillRes = await jsonRequest(app, "/v4/spreadsheets/sheet_tracker/values/Bugs!A1:A1", {
+      method: "PUT",
+      body: { values: [["left", "right"]] },
+    });
+    expect(spillRes.status).toBe(400);
+    const unchangedRes = await app.request(`${base}/v4/spreadsheets/sheet_tracker/values/Bugs!A1:B1`, {
+      headers: authHeaders(),
+    });
+    expect(await unchangedRes.json()).toMatchObject({ values: [["ID", "Status"]] });
+
+    const unsupportedValuesRes = await jsonRequest(app, "/v4/spreadsheets/sheet_tracker/values/Bugs!A1:bogus", {
+      method: "POST",
+      body: {},
+    });
+    expect(unsupportedValuesRes.status).toBe(400);
+
+    const invalidBatchRequests = [
+      { addSheet: { properties: { sheetId: 17, title: "Duplicate ID" } } },
+      { addSheet: { properties: { sheetId: 18, title: "Bugs" } } },
+      { deleteSheet: { sheetId: 17 } },
+      { deleteSheet: { sheetId: 999 } },
+      { updateSheetProperties: { properties: { sheetId: 999, title: "Missing" } } },
+      { unsupportedRequest: {} },
+    ];
+    for (const request of invalidBatchRequests) {
+      const invalidRes = await jsonRequest(app, "/v4/spreadsheets/sheet_tracker:batchUpdate", {
+        method: "POST",
+        body: { requests: [request] },
+      });
+      expect(invalidRes.status, JSON.stringify(request)).toBe(400);
+    }
+  });
+
+  it("supports complex A1 ranges and Drive name-contains queries", async () => {
+    const wholeSheetRes = await app.request(`${base}/v4/spreadsheets/sheet_tracker/values/Bugs`, {
+      headers: authHeaders(),
+    });
+    expect(await wholeSheetRes.json()).toMatchObject({
+      values: [
+        ["ID", "Status"],
+        ["BUG-1", "Open"],
+      ],
+    });
+    const columnRes = await app.request(`${base}/v4/spreadsheets/sheet_tracker/values/Bugs!A:B`, {
+      headers: authHeaders(),
+    });
+    expect(await columnRes.json()).toMatchObject({
+      values: [
+        ["ID", "Status"],
+        ["BUG-1", "Open"],
+      ],
+    });
+    const rowRes = await app.request(`${base}/v4/spreadsheets/sheet_tracker/values/Bugs!1:2`, {
+      headers: authHeaders(),
+    });
+    expect(await rowRes.json()).toMatchObject({
+      values: [
+        ["ID", "Status"],
+        ["BUG-1", "Open"],
+      ],
+    });
+
+    const createRes = await jsonRequest(app, "/v4/spreadsheets", {
+      method: "POST",
+      body: {
+        properties: { title: "O'Brien Roadmap" },
+        sheets: [{ properties: { title: "Owner's Plan" } }],
+      },
+    });
+    const created = (await createRes.json()) as { spreadsheetId: string };
+    const quotedRange = encodeURIComponent("'Owner''s Plan'!A1:B1");
+    const writeRes = await jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}/values/${quotedRange}`, {
+      method: "PUT",
+      body: { values: [["Owner", "Status"]] },
+    });
+    expect(writeRes.status).toBe(200);
+
+    const containsQuery = encodeURIComponent("name contains 'o\\'BRIEN'");
+    const driveRes = await app.request(`${base}/drive/v3/files?q=${containsQuery}`, { headers: authHeaders() });
+    const drive = (await driveRes.json()) as { files: Array<{ id: string }> };
+    expect(drive.files.map((file) => file.id)).toContain(created.spreadsheetId);
+  });
+
+  it("preserves concurrent sheet writes and appends", async () => {
+    const createRes = await jsonRequest(app, "/v4/spreadsheets", {
+      method: "POST",
+      body: { properties: { title: "Concurrent Sheet" } },
+    });
+    const created = (await createRes.json()) as { spreadsheetId: string };
+
+    const writes = await Promise.all([
+      jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}/values/Sheet1!A1`, {
+        method: "PUT",
+        body: { values: [["alpha"]] },
+      }),
+      jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}/values/Sheet1!B1`, {
+        method: "PUT",
+        body: { values: [["beta"]] },
+      }),
+    ]);
+    expect(writes.every((response) => response.status === 200)).toBe(true);
+
+    const appends = await Promise.all(
+      ["gamma", "delta"].map((value) =>
+        jsonRequest(app, `/v4/spreadsheets/${created.spreadsheetId}/values/Sheet1:append`, {
+          method: "POST",
+          body: { values: [[value]] },
+        }),
+      ),
+    );
+    expect(appends.every((response) => response.status === 200)).toBe(true);
+
+    const readRes = await app.request(`${base}/v4/spreadsheets/${created.spreadsheetId}/values/Sheet1!A1:B3`, {
+      headers: authHeaders(),
+    });
+    const read = (await readRes.json()) as { values: unknown[][] };
+    expect(read.values[0]).toEqual(["alpha", "beta"]);
+    expect(read.values.flat()).toEqual(expect.arrayContaining(["gamma", "delta"]));
   });
 });
