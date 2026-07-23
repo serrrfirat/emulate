@@ -1,6 +1,7 @@
-import type { RouteContext } from "@emulators/core";
+import type { Context, RouteContext } from "@emulators/core";
 import {
   buildFreeBusyResponse,
+  calendarEventEtag,
   createCalendarEventRecord,
   deleteCalendarEventRecord,
   formatCalendarEventResource,
@@ -9,6 +10,7 @@ import {
   getCalendarEventById,
   listCalendarEvents,
   listCalendarsForUser,
+  updateCalendarEventRecord,
 } from "../calendar-helpers.js";
 import { googleApiError } from "../helpers.js";
 import {
@@ -88,6 +90,76 @@ export function calendarRoutes({ app, store }: RouteContext): void {
 
     return c.json(formatCalendarEventResource(gs, event));
   });
+
+  app.get("/calendar/v3/calendars/:calendarId/events/:eventId", (c) => {
+    const authEmail = requireGoogleAuth(c);
+    if (authEmail instanceof Response) return authEmail;
+
+    const event = getCalendarEventById(gs, authEmail, c.req.param("calendarId"), c.req.param("eventId"));
+    if (!event) {
+      return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
+    }
+
+    return c.json(formatCalendarEventResource(gs, event));
+  });
+
+  const updateEventHandler = async (c: Context) => {
+    const authEmail = requireGoogleAuth(c);
+    if (authEmail instanceof Response) return authEmail;
+
+    const body = await parseGoogleBody(c);
+    const event = getCalendarEventById(gs, authEmail, c.req.param("calendarId"), c.req.param("eventId"));
+    if (!event) {
+      return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
+    }
+    const ifMatch = c.req.header("If-Match");
+    if (ifMatch && ifMatch !== "*" && ifMatch !== calendarEventEtag(event)) {
+      return googleApiError(c, 412, "Precondition check failed.", "conditionNotMet", "FAILED_PRECONDITION");
+    }
+
+    const parsed = parseCalendarEventInputFromBody(body);
+    const patch = {
+      ...(body.status !== undefined ? { status: parsed.status } : {}),
+      ...(body.summary !== undefined ? { summary: parsed.summary } : {}),
+      ...(body.description !== undefined ? { description: parsed.description } : {}),
+      ...(body.location !== undefined ? { location: parsed.location } : {}),
+      ...(body.start !== undefined
+        ? {
+            start_date_time: parsed.start_date_time,
+            start_date: parsed.start_date,
+            start_time_zone: parsed.start_time_zone,
+          }
+        : {}),
+      ...(body.end !== undefined
+        ? {
+            end_date_time: parsed.end_date_time,
+            end_date: parsed.end_date,
+            end_time_zone: parsed.end_time_zone,
+          }
+        : {}),
+      ...(body.attendees !== undefined ? { attendees: parsed.attendees } : {}),
+      ...(body.conferenceData !== undefined
+        ? {
+            conference_entry_points: parsed.conference_entry_points,
+            hangout_link: parsed.hangout_link,
+          }
+        : {}),
+      ...(body.transparency !== undefined ? { transparency: parsed.transparency } : {}),
+      ...(body.reminders !== undefined ? { reminders: parsed.reminders } : {}),
+    };
+    const nextStartDateTime = body.start !== undefined ? parsed.start_date_time : event.start_date_time;
+    const nextStartDate = body.start !== undefined ? parsed.start_date : event.start_date;
+    const nextEndDateTime = body.end !== undefined ? parsed.end_date_time : event.end_date_time;
+    const nextEndDate = body.end !== undefined ? parsed.end_date : event.end_date;
+    if ((!nextStartDateTime && !nextStartDate) || (!nextEndDateTime && !nextEndDate)) {
+      return googleApiError(c, 400, "Event start and end are required.", "invalidArgument", "INVALID_ARGUMENT");
+    }
+
+    const updated = updateCalendarEventRecord(gs, event, patch);
+    return c.json(formatCalendarEventResource(gs, updated));
+  };
+
+  app.patch("/calendar/v3/calendars/:calendarId/events/:eventId", updateEventHandler);
 
   app.delete("/calendar/v3/calendars/:calendarId/events/:eventId", (c) => {
     const authEmail = requireGoogleAuth(c);

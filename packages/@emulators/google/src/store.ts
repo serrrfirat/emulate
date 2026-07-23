@@ -13,6 +13,8 @@ import type {
   GoogleCalendar,
   GoogleCalendarEvent,
   GoogleDriveItem,
+  GoogleDrivePermission,
+  GoogleSharedDrive,
   GoogleDocument,
   GoogleSpreadsheet,
 } from "./entities.js";
@@ -31,6 +33,8 @@ export interface GoogleStore {
   calendars: Collection<GoogleCalendar>;
   calendarEvents: Collection<GoogleCalendarEvent>;
   driveItems: Collection<GoogleDriveItem>;
+  drivePermissions: Collection<GoogleDrivePermission>;
+  sharedDrives: Collection<GoogleSharedDrive>;
   documents: Collection<GoogleDocument>;
   spreadsheets: Collection<GoogleSpreadsheet>;
 }
@@ -61,6 +65,12 @@ export function getGoogleStore(store: Store): GoogleStore {
       "user_email",
     ]),
     driveItems: store.collection<GoogleDriveItem>("google.drive_items", ["google_id", "user_email", "mime_type"]),
+    drivePermissions: store.collection<GoogleDrivePermission>("google.drive_permissions", [
+      "google_id",
+      "user_email",
+      "file_google_id",
+    ]),
+    sharedDrives: store.collection<GoogleSharedDrive>("google.shared_drives", ["google_id"]),
     documents: store.collection<GoogleDocument>("google.documents", ["google_id", "user_email"]),
     spreadsheets: store.collection<GoogleSpreadsheet>("google.spreadsheets", ["google_id", "user_email"]),
   };

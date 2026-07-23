@@ -237,13 +237,34 @@ google:
       calendar_id: primary
       summary: Project Kickoff
       start_date_time: 2025-01-10T09:00:00.000Z
+      start_time_zone: UTC
       end_date_time: 2025-01-10T09:30:00.000Z
+      end_time_zone: UTC
+      reminders:
+        use_default: false
+        overrides:
+          - method: popup
+            minutes: 10
   drive_items:
     - id: drv_docs
       user_email: testuser@example.com
       name: Docs
       mime_type: application/vnd.google-apps.folder
       parent_ids: [root]
+      description: Shared documentation
+      starred: true
+      drive_id: shared_design
+  shared_drives:
+    - id: shared_design
+      name: Design Team
+      member_emails: [testuser@example.com, reviewer@example.com]
+  drive_permissions:
+    - id: perm_reviewer
+      user_email: testuser@example.com
+      file_id: drv_docs
+      role: reader
+      type: user
+      email_address: reviewer@example.com
   documents:
     - id: doc_runbook
       user_email: testuser@example.com
@@ -766,8 +787,8 @@ OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local
 - `GET /gmail/v1/users/:userId/history`, `POST /gmail/v1/users/:userId/watch`, `POST /gmail/v1/users/:userId/stop`
 - `GET /gmail/v1/users/:userId/settings/filters`, `POST /gmail/v1/users/:userId/settings/filters`, `DELETE /gmail/v1/users/:userId/settings/filters/:id`
 - `GET /gmail/v1/users/:userId/settings/forwardingAddresses`, `GET /gmail/v1/users/:userId/settings/sendAs`
-- `GET /calendar/v3/users/:userId/calendarList`, `GET /calendar/v3/calendars/:calendarId/events`, `POST /calendar/v3/calendars/:calendarId/events`, `DELETE /calendar/v3/calendars/:calendarId/events/:eventId`, `POST /calendar/v3/freeBusy`
-- `GET /drive/v3/files`, `GET /drive/v3/files/:fileId`, `POST /drive/v3/files`, `PATCH /drive/v3/files/:fileId`, `PUT /drive/v3/files/:fileId`, `POST /upload/drive/v3/files`
+- `GET /calendar/v3/users/:userId/calendarList`, event list/create/get/update/delete routes, and `POST /calendar/v3/freeBusy`
+- `GET /drive/v3/files`, file metadata/create/update/delete/upload routes, native Docs/Sheets/Slides/Drawings export, user permission create/list/delete routes, and `GET /drive/v3/drives`
 - `POST /v1/documents`, `GET /v1/documents/:documentId`, `POST /v1/documents/:documentId:batchUpdate`
 - `POST /v4/spreadsheets`, `GET /v4/spreadsheets/:spreadsheetId`, value read/write/append/clear/batch-get routes, and `POST /v4/spreadsheets/:spreadsheetId:batchUpdate`
 

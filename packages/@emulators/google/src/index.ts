@@ -9,7 +9,7 @@ import {
   generateUid,
 } from "./helpers.js";
 import { createCalendarEventRecord, createCalendarRecord } from "./calendar-helpers.js";
-import { createDriveItemRecord } from "./drive-helpers.js";
+import { createDriveItemRecord, createDrivePermissionRecord, getDriveItemById } from "./drive-helpers.js";
 import { createDocumentRecord } from "./document-helpers.js";
 import { createSpreadsheetRecord } from "./spreadsheet-helpers.js";
 import { calendarRoutes } from "./routes/calendar.js";
@@ -93,8 +93,10 @@ export interface GoogleSeedCalendarEvent {
   location?: string;
   start_date_time?: string;
   start_date?: string;
+  start_time_zone?: string;
   end_date_time?: string;
   end_date?: string;
+  end_time_zone?: string;
   attendees?: Array<{
     email: string;
     display_name?: string;
@@ -105,6 +107,13 @@ export interface GoogleSeedCalendarEvent {
     label?: string;
   }>;
   hangout_link?: string;
+  reminders?: {
+    use_default?: boolean;
+    overrides?: Array<{
+      method: string;
+      minutes: number;
+    }>;
+  };
 }
 
 export interface GoogleSeedDriveItem {
@@ -112,8 +121,29 @@ export interface GoogleSeedDriveItem {
   user_email?: string;
   name: string;
   mime_type: string;
+  description?: string;
   parent_ids?: string[];
+  starred?: boolean;
+  trashed?: boolean;
+  drive_id?: string;
   data?: string;
+}
+
+export interface GoogleSeedDrivePermission {
+  id?: string;
+  user_email?: string;
+  file_id: string;
+  role: string;
+  type?: string;
+  email_address?: string;
+  display_name?: string;
+}
+
+export interface GoogleSeedSharedDrive {
+  id: string;
+  user_email?: string;
+  member_emails?: string[];
+  name: string;
 }
 
 export interface GoogleSeedDocument {
@@ -150,6 +180,8 @@ export interface GoogleSeedConfig {
   calendars?: GoogleSeedCalendar[];
   calendar_events?: GoogleSeedCalendarEvent[];
   drive_items?: GoogleSeedDriveItem[];
+  drive_permissions?: GoogleSeedDrivePermission[];
+  shared_drives?: GoogleSeedSharedDrive[];
   documents?: GoogleSeedDocument[];
   spreadsheets?: GoogleSeedSpreadsheet[];
 }
@@ -379,12 +411,20 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: GoogleSee
     seedDriveItems(store, config.drive_items, fallbackEmail);
   }
 
+  if (config.shared_drives) {
+    seedSharedDrives(store, config.shared_drives, fallbackEmail);
+  }
+
   if (config.documents) {
     seedDocuments(store, config.documents, fallbackEmail);
   }
 
   if (config.spreadsheets) {
     seedSpreadsheets(store, config.spreadsheets, fallbackEmail);
+  }
+
+  if (config.drive_permissions) {
+    seedDrivePermissions(store, config.drive_permissions, fallbackEmail);
   }
 }
 
@@ -485,8 +525,10 @@ function seedCalendarEvents(store: Store, events: GoogleSeedCalendarEvent[], fal
       location: event.location ?? null,
       start_date_time: event.start_date_time ?? null,
       start_date: event.start_date ?? null,
+      start_time_zone: event.start_time_zone ?? null,
       end_date_time: event.end_date_time ?? null,
       end_date: event.end_date ?? null,
+      end_time_zone: event.end_time_zone ?? null,
       attendees: (event.attendees ?? []).map((attendee) => ({
         email: attendee.email,
         display_name: attendee.display_name ?? null,
@@ -500,6 +542,12 @@ function seedCalendarEvents(store: Store, events: GoogleSeedCalendarEvent[], fal
         label: entry.label ?? null,
       })),
       hangout_link: event.hangout_link ?? null,
+      reminders: event.reminders
+        ? {
+            use_default: event.reminders.use_default ?? false,
+            overrides: event.reminders.overrides ?? [],
+          }
+        : null,
     });
   }
 }
@@ -509,16 +557,64 @@ function seedDriveItems(store: Store, items: GoogleSeedDriveItem[], fallbackEmai
 
   for (const item of items) {
     const userEmail = item.user_email ?? fallbackEmail;
-    if (item.id && gs.driveItems.findOneBy("google_id", item.id)) continue;
+    if (item.id && gs.driveItems.findBy("user_email", userEmail).some((candidate) => candidate.google_id === item.id)) {
+      continue;
+    }
 
     createDriveItemRecord(gs, {
       google_id: item.id,
       user_email: userEmail,
       name: item.name,
       mime_type: item.mime_type,
+      description: item.description ?? null,
       parent_google_ids: item.parent_ids ?? ["root"],
+      starred: item.starred ?? false,
+      trashed: item.trashed ?? false,
+      drive_google_id: item.drive_id ?? null,
       size: item.data ? Buffer.byteLength(item.data, "utf8") : null,
       data: item.data ? Buffer.from(item.data, "utf8").toString("base64url") : null,
+    });
+  }
+}
+
+function seedDrivePermissions(store: Store, permissions: GoogleSeedDrivePermission[], fallbackEmail: string): void {
+  const gs = getGoogleStore(store);
+  for (const permission of permissions) {
+    const userEmail = permission.user_email ?? fallbackEmail;
+    if (!getDriveItemById(gs, userEmail, permission.file_id)) continue;
+    const created = createDrivePermissionRecord(gs, {
+      user_email: userEmail,
+      file_google_id: permission.file_id,
+      role: permission.role,
+      permission_type: permission.type ?? "user",
+      email_address: permission.email_address ?? null,
+      display_name: permission.display_name ?? null,
+    });
+    if (permission.id) {
+      gs.drivePermissions.update(created.id, { google_id: permission.id });
+    }
+  }
+}
+
+function seedSharedDrives(store: Store, drives: GoogleSeedSharedDrive[], fallbackEmail: string): void {
+  const gs = getGoogleStore(store);
+  for (const drive of drives) {
+    const legacyMemberEmail = drive.user_email ?? (drive.member_emails?.length ? undefined : fallbackEmail);
+    const memberEmails = Array.from(
+      new Set([...(legacyMemberEmail ? [legacyMemberEmail] : []), ...(drive.member_emails ?? [])]),
+    );
+    const existing = gs.sharedDrives.findOneBy("google_id", drive.id);
+    if (existing) {
+      gs.sharedDrives.update(existing.id, {
+        member_emails: Array.from(new Set([...existing.member_emails, ...memberEmails])),
+      });
+      continue;
+    }
+
+    gs.sharedDrives.insert({
+      google_id: drive.id,
+      name: drive.name,
+      member_emails: memberEmails,
     });
   }
 }

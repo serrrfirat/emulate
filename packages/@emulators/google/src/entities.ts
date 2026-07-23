@@ -130,8 +130,19 @@ export interface GoogleCalendarConferenceEntryPoint {
   label: string | null;
 }
 
+export interface GoogleCalendarEventReminderOverride {
+  method: string;
+  minutes: number;
+}
+
+export interface GoogleCalendarEventReminders {
+  use_default: boolean;
+  overrides: GoogleCalendarEventReminderOverride[];
+}
+
 export interface GoogleCalendarEvent extends Entity {
   google_id: string;
+  revision?: number;
   user_email: string;
   calendar_google_id: string;
   status: string;
@@ -142,11 +153,14 @@ export interface GoogleCalendarEvent extends Entity {
   hangout_link: string | null;
   start_date_time: string | null;
   start_date: string | null;
+  start_time_zone?: string | null;
   end_date_time: string | null;
   end_date: string | null;
+  end_time_zone?: string | null;
   attendees: GoogleCalendarEventAttendee[];
   conference_entry_points: GoogleCalendarConferenceEntryPoint[];
   transparency: string | null;
+  reminders?: GoogleCalendarEventReminders | null;
 }
 
 export interface GoogleDriveItem extends Entity {
@@ -154,11 +168,34 @@ export interface GoogleDriveItem extends Entity {
   user_email: string;
   name: string;
   mime_type: string;
+  description?: string | null;
   parent_google_ids: string[];
   web_view_link: string | null;
   size: number | null;
+  starred?: boolean;
   trashed: boolean;
+  drive_google_id?: string | null;
+  owners?: Array<{
+    email_address: string;
+    display_name: string | null;
+  }>;
   data: string | null;
+}
+
+export interface GoogleDrivePermission extends Entity {
+  google_id: string;
+  user_email: string;
+  file_google_id: string;
+  role: string;
+  permission_type: string;
+  email_address: string | null;
+  display_name: string | null;
+}
+
+export interface GoogleSharedDrive extends Entity {
+  google_id: string;
+  name: string;
+  member_emails: string[];
 }
 
 export interface GoogleDocument extends Entity {

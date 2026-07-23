@@ -4,6 +4,7 @@ import type {
   GoogleCalendarConferenceEntryPoint,
   GoogleCalendarEvent,
   GoogleCalendarEventAttendee,
+  GoogleCalendarEventReminders,
 } from "./entities.js";
 import type { GoogleStore } from "./store.js";
 
@@ -30,12 +31,15 @@ export interface GoogleCalendarEventInput {
   location?: string | null;
   start_date_time?: string | null;
   start_date?: string | null;
+  start_time_zone?: string | null;
   end_date_time?: string | null;
   end_date?: string | null;
+  end_time_zone?: string | null;
   attendees?: GoogleCalendarEventAttendee[];
   conference_entry_points?: GoogleCalendarConferenceEntryPoint[];
   hangout_link?: string | null;
   transparency?: string | null;
+  reminders?: GoogleCalendarEventReminders | null;
 }
 
 export interface ListCalendarEventsOptions {
@@ -153,6 +157,7 @@ export function createCalendarEventRecord(gs: GoogleStore, input: GoogleCalendar
 
   return gs.calendarEvents.insert({
     google_id: eventId,
+    revision: 1,
     user_email: input.user_email,
     calendar_google_id: calendar.google_id,
     status: input.status ?? "confirmed",
@@ -163,11 +168,14 @@ export function createCalendarEventRecord(gs: GoogleStore, input: GoogleCalendar
     hangout_link: hangoutLink,
     start_date_time: input.start_date_time ?? null,
     start_date: input.start_date ?? null,
+    start_time_zone: input.start_time_zone ?? null,
     end_date_time: input.end_date_time ?? null,
     end_date: input.end_date ?? null,
+    end_time_zone: input.end_time_zone ?? null,
     attendees: input.attendees ?? [],
     conference_entry_points: input.conference_entry_points ?? [],
     transparency: input.transparency ?? null,
+    reminders: input.reminders ?? null,
   });
 }
 
@@ -187,6 +195,21 @@ export function getCalendarEventById(
 
 export function deleteCalendarEventRecord(gs: GoogleStore, event: GoogleCalendarEvent): boolean {
   return gs.calendarEvents.delete(event.id);
+}
+
+export function updateCalendarEventRecord(
+  gs: GoogleStore,
+  event: GoogleCalendarEvent,
+  input: Partial<Omit<GoogleCalendarEventInput, "google_id" | "user_email" | "calendar_google_id">>,
+): GoogleCalendarEvent {
+  const updated = gs.calendarEvents.update(event.id, {
+    ...input,
+    revision: (event.revision ?? 1) + 1,
+  });
+  if (!updated) {
+    throw new Error("Calendar event not found");
+  }
+  return updated;
 }
 
 export function listCalendarEvents(
@@ -236,7 +259,7 @@ export function formatCalendarEventResource(gs: GoogleStore, event: GoogleCalend
 
   return {
     kind: "calendar#event",
-    etag: `"${event.google_id}"`,
+    etag: calendarEventEtag(event),
     id: event.google_id,
     status: event.status,
     htmlLink: event.html_link ?? undefined,
@@ -244,6 +267,7 @@ export function formatCalendarEventResource(gs: GoogleStore, event: GoogleCalend
     summary: event.summary,
     description: event.description ?? undefined,
     location: event.location ?? undefined,
+    transparency: event.transparency ?? undefined,
     created: event.created_at,
     updated: event.updated_at,
     start: formatCalendarDateRange(event, "start", calendar?.time_zone ?? "UTC"),
@@ -265,7 +289,17 @@ export function formatCalendarEventResource(gs: GoogleStore, event: GoogleCalend
             })),
           }
         : undefined,
+    reminders: event.reminders
+      ? {
+          useDefault: event.reminders.use_default,
+          overrides: event.reminders.overrides,
+        }
+      : undefined,
   };
+}
+
+export function calendarEventEtag(event: GoogleCalendarEvent): string {
+  return `"${event.google_id}:${event.revision ?? 1}"`;
 }
 
 export function buildFreeBusyResponse(
@@ -311,9 +345,10 @@ function buildCalendarEventLink(calendarId: string, eventId: string): string {
   return `https://calendar.google.com/calendar/u/0/r/eventedit/${calendarId}/${eventId}`;
 }
 
-function formatCalendarDateRange(event: GoogleCalendarEvent, prefix: "start" | "end", timeZone: string) {
+function formatCalendarDateRange(event: GoogleCalendarEvent, prefix: "start" | "end", calendarTimeZone: string) {
   const dateTime = prefix === "start" ? event.start_date_time : event.end_date_time;
   const date = prefix === "start" ? event.start_date : event.end_date;
+  const timeZone = (prefix === "start" ? event.start_time_zone : event.end_time_zone) ?? calendarTimeZone;
 
   if (dateTime) {
     return {
