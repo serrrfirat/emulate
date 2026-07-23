@@ -16,6 +16,7 @@ import { pinsRoutes } from "./routes/pins.js";
 import { bookmarksRoutes } from "./routes/bookmarks.js";
 import { viewsRoutes } from "./routes/views.js";
 import { inspectorRoutes } from "./routes/inspector.js";
+import { searchRoutes } from "./routes/search.js";
 
 export { getSlackStore, type SlackStore } from "./store.js";
 export * from "./entities.js";
@@ -106,6 +107,7 @@ const DEFAULT_SLACK_SCOPES = [
   "reactions:read",
   "reactions:write",
   "team:read",
+  "search:read",
 ];
 
 function seedDefaults(store: Store, _baseUrl: string): void {
@@ -373,6 +375,7 @@ export const slackPlugin: ServicePlugin = {
     usersRoutes(ctx);
     reactionsRoutes(ctx);
     teamRoutes(ctx);
+    searchRoutes(ctx);
     oauthRoutes(ctx);
     webhookRoutes(ctx);
     filesRoutes(ctx);

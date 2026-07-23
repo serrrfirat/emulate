@@ -1,4 +1,4 @@
-import type { RouteContext } from "@emulators/core";
+import type { Context, RouteContext } from "@emulators/core";
 import type { SlackChannel, SlackFile, SlackFileShare, SlackMessage, SlackUser } from "../entities.js";
 import { getSlackStore } from "../store.js";
 import {
@@ -131,7 +131,7 @@ export function conversationsRoutes(ctx: RouteContext): void {
   };
 
   // conversations.list
-  app.post("/api/conversations.list", async (c) => {
+  const conversationsList = async (c: Context) => {
     const authUser = c.get("authUser");
     if (!authUser) return slackError(c, "not_authed");
 
@@ -165,10 +165,12 @@ export function conversationsRoutes(ctx: RouteContext): void {
       channels: page.map((ch) => formatChannel(ch, authUserId, authSlackUser?.name)),
       response_metadata: { next_cursor: nextCursor },
     });
-  });
+  };
+  app.get("/api/conversations.list", conversationsList);
+  app.post("/api/conversations.list", conversationsList);
 
   // conversations.info
-  app.post("/api/conversations.info", async (c) => {
+  const conversationsInfo = async (c: Context) => {
     const authUser = c.get("authUser");
     if (!authUser) return slackError(c, "not_authed");
 
@@ -184,7 +186,9 @@ export function conversationsRoutes(ctx: RouteContext): void {
     if (!canReadConversation(ch, authSlackUser, authUserId)) return slackError(c, "not_in_channel");
 
     return slackOk(c, { channel: formatChannel(ch, authUserId, authSlackUser?.name) });
-  });
+  };
+  app.get("/api/conversations.info", conversationsInfo);
+  app.post("/api/conversations.info", conversationsInfo);
 
   // conversations.create
   app.post("/api/conversations.create", async (c) => {
@@ -428,7 +432,7 @@ export function conversationsRoutes(ctx: RouteContext): void {
   });
 
   // conversations.history
-  app.post("/api/conversations.history", async (c) => {
+  const conversationsHistory = async (c: Context) => {
     const authUser = c.get("authUser");
     if (!authUser) return slackError(c, "not_authed");
 
@@ -468,10 +472,12 @@ export function conversationsRoutes(ctx: RouteContext): void {
       has_more: hasMore,
       response_metadata: { next_cursor: nextCursor },
     });
-  });
+  };
+  app.get("/api/conversations.history", conversationsHistory);
+  app.post("/api/conversations.history", conversationsHistory);
 
   // conversations.replies
-  app.post("/api/conversations.replies", async (c) => {
+  const conversationsReplies = async (c: Context) => {
     const authUser = c.get("authUser");
     if (!authUser) return slackError(c, "not_authed");
 
@@ -497,7 +503,9 @@ export function conversationsRoutes(ctx: RouteContext): void {
       messages: allMessages.map((message) => formatSlackMessageForAuth(message, authUser)),
       has_more: false,
     });
-  });
+  };
+  app.get("/api/conversations.replies", conversationsReplies);
+  app.post("/api/conversations.replies", conversationsReplies);
 
   // conversations.join
   app.post("/api/conversations.join", async (c) => {

@@ -1,6 +1,6 @@
 # @emulators/google
 
-Google OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local Gmail, Calendar, and Drive flows.
+Google OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local Gmail, Calendar, Drive, Docs, and Sheets flows.
 
 Part of [emulate](https://github.com/vercel-labs/emulate) — local drop-in replacement services for CI and no-network sandboxes.
 
@@ -75,6 +75,21 @@ npm install @emulators/google
 - `PUT /drive/v3/files/:fileId` — update file content
 - `POST /upload/drive/v3/files` — upload file
 
+### Docs
+- `POST /v1/documents` — create document
+- `GET /v1/documents/:documentId` — read document structure and text
+- `POST /v1/documents/:documentId:batchUpdate` — insert, delete, replace, and accept common formatting requests
+
+### Sheets
+- `POST /v4/spreadsheets` — create spreadsheet
+- `GET /v4/spreadsheets/:spreadsheetId` — get spreadsheet and sheet metadata
+- `GET /v4/spreadsheets/:spreadsheetId/values/:range` — read A1 values
+- `PUT /v4/spreadsheets/:spreadsheetId/values/:range` — write A1 values
+- `POST /v4/spreadsheets/:spreadsheetId/values/:range:append` — append rows
+- `POST /v4/spreadsheets/:spreadsheetId/values/:range:clear` — clear values
+- `GET /v4/spreadsheets/:spreadsheetId/values:batchGet` — read multiple ranges
+- `POST /v4/spreadsheets/:spreadsheetId:batchUpdate` — add, delete, rename, or format sheets
+
 ## Auth
 
 Standard OAuth 2.0 authorization code flow. Configure clients in the seed config.
@@ -122,6 +137,21 @@ google:
       name: Docs
       mime_type: application/vnd.google-apps.folder
       parent_ids: [root]
+  documents:
+    - id: doc_runbook
+      user_email: testuser@example.com
+      title: Incident Runbook
+      body: Check the service dashboard first.
+  spreadsheets:
+    - id: sheet_tracker
+      user_email: testuser@example.com
+      title: Bug Tracker
+      sheets:
+        - id: 17
+          title: Bugs
+          values:
+            - [ID, Status]
+            - [BUG-1, Open]
 ```
 
 ## Links

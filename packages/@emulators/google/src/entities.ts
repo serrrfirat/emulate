@@ -160,3 +160,25 @@ export interface GoogleDriveItem extends Entity {
   trashed: boolean;
   data: string | null;
 }
+
+export interface GoogleDocument extends Entity {
+  google_id: string;
+  user_email: string;
+  body: string;
+  revision_id: string;
+}
+
+export interface GoogleSheet {
+  sheet_id: number;
+  title: string;
+  index: number;
+  row_count: number;
+  column_count: number;
+  values: unknown[][];
+}
+
+export interface GoogleSpreadsheet extends Entity {
+  google_id: string;
+  user_email: string;
+  sheets: GoogleSheet[];
+}

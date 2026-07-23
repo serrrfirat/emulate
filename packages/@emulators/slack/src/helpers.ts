@@ -124,6 +124,10 @@ export function slackConversationJoinScope(ch: SlackChannel): SlackScopeRequirem
 }
 
 export async function parseSlackBody(c: Context): Promise<Record<string, unknown>> {
+  if (c.req.method === "GET") {
+    return Object.fromEntries(new URL(c.req.url).searchParams.entries());
+  }
+
   const contentType = c.req.header("Content-Type") ?? "";
   const rawText = await c.req.text();
 

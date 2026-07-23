@@ -244,6 +244,21 @@ google:
       name: Docs
       mime_type: application/vnd.google-apps.folder
       parent_ids: [root]
+  documents:
+    - id: doc_runbook
+      user_email: testuser@example.com
+      title: Incident Runbook
+      body: Check the service dashboard first.
+  spreadsheets:
+    - id: sheet_tracker
+      user_email: testuser@example.com
+      title: Bug Tracker
+      sheets:
+        - id: 17
+          title: Bugs
+          values:
+            - [ID, Status]
+            - [BUG-1, Open]
 
 slack:
   team:
@@ -302,6 +317,7 @@ slack:
         - reactions:read
         - reactions:write
         - team:read
+        - search:read
       user_scopes: [users:read, users.profile:read]
       bot_name: my-bot
   tokens:
@@ -337,6 +353,7 @@ slack:
         - reactions:read
         - reactions:write
         - team:read
+        - search:read
   strict_scopes: false
 
 linear:
@@ -724,9 +741,9 @@ Every endpoint below is fully stateful. Creates, updates, and deletes persist in
 - `GET /zen` - random zen phrase
 - `GET /versions` - API versions
 
-## Google OAuth + Gmail, Calendar, and Drive APIs
+## Google OAuth + Gmail, Calendar, Drive, Docs, and Sheets APIs
 
-OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local inbox, calendar, and drive flows.
+OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local inbox, calendar, drive, document, and spreadsheet flows.
 
 - `GET /o/oauth2/v2/auth` - authorization endpoint
 - `POST /oauth2/token` - token exchange
@@ -751,6 +768,8 @@ OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local
 - `GET /gmail/v1/users/:userId/settings/forwardingAddresses`, `GET /gmail/v1/users/:userId/settings/sendAs`
 - `GET /calendar/v3/users/:userId/calendarList`, `GET /calendar/v3/calendars/:calendarId/events`, `POST /calendar/v3/calendars/:calendarId/events`, `DELETE /calendar/v3/calendars/:calendarId/events/:eventId`, `POST /calendar/v3/freeBusy`
 - `GET /drive/v3/files`, `GET /drive/v3/files/:fileId`, `POST /drive/v3/files`, `PATCH /drive/v3/files/:fileId`, `PUT /drive/v3/files/:fileId`, `POST /upload/drive/v3/files`
+- `POST /v1/documents`, `GET /v1/documents/:documentId`, `POST /v1/documents/:documentId:batchUpdate`
+- `POST /v4/spreadsheets`, `GET /v4/spreadsheets/:spreadsheetId`, value read/write/append/clear/batch-get routes, and `POST /v4/spreadsheets/:spreadsheetId:batchUpdate`
 
 ## Slack API
 
@@ -767,6 +786,9 @@ Fully stateful Slack Web API emulation with channels, messages, threads, reactio
 - `POST /api/chat.deleteScheduledMessage` - delete pending scheduled message
 - `POST /api/chat.scheduledMessages.list` - list pending scheduled messages
 - `POST /api/chat.meMessage` - /me message
+
+### Search
+- `GET /api/search.messages` / `POST /api/search.messages` - search visible messages by text, `from:`, and `in:` with page pagination
 
 ### Conversations
 - `POST /api/conversations.list` - list conversations (cursor pagination, `types`, `exclude_archived`)
@@ -833,7 +855,7 @@ Modal opens and pushes require values from `/api/views.generateTriggerId`. Pass 
 ### Inspector
 - `GET /` - tabbed local inspector for conversations, messages, files, views, auth records, incoming webhooks, event subscriptions, and event deliveries
 
-Slack scope checks are relaxed by default so local tests can use simple bearer tokens. Set `slack.strict_scopes: true` in seed config to make supported Web API methods return Slack-style `missing_scope` errors with `needed` and `provided` fields. Strict mode checks `chat:write`, `channels:read`, `channels:history`, `channels:join`, `channels:manage`, `channels:write`, `groups:read`, `groups:history`, `groups:write`, `im:read`, `im:history`, `im:write`, `mpim:read`, `mpim:history`, `mpim:write`, `users:read`, `users:read.email`, `users.profile:read`, `users.profile:write`, `users:write`, `files:read`, `files:write`, `pins:read`, `pins:write`, `bookmarks:read`, `bookmarks:write`, `reactions:read`, `reactions:write`, and `team:read`. Slack lists no method-specific scopes for `views.publish`, `views.open`, `views.update`, or `views.push`, so the emulator requires auth but does not add strict-scope checks for those methods.
+Slack scope checks are relaxed by default so local tests can use simple bearer tokens. Set `slack.strict_scopes: true` in seed config to make supported Web API methods return Slack-style `missing_scope` errors with `needed` and `provided` fields. Strict mode checks `chat:write`, `channels:read`, `channels:history`, `channels:join`, `channels:manage`, `channels:write`, `groups:read`, `groups:history`, `groups:write`, `im:read`, `im:history`, `im:write`, `mpim:read`, `mpim:history`, `mpim:write`, `users:read`, `users:read.email`, `users.profile:read`, `users.profile:write`, `users:write`, `files:read`, `files:write`, `pins:read`, `pins:write`, `bookmarks:read`, `bookmarks:write`, `reactions:read`, `reactions:write`, `team:read`, and `search:read`. Slack lists no method-specific scopes for `views.publish`, `views.open`, `views.update`, or `views.push`, so the emulator requires auth but does not add strict-scope checks for those methods.
 
 Current Slack limits: Slack Connect, Enterprise Grid admin APIs, Audit Logs API, SCIM, Legal Holds, Socket Mode, slash command and interaction simulation, user groups, reminders, stars, calls, canvases, lists, functions, workflows, chat streaming, legacy `files.upload`, exact rate limiting, and paid-plan behavior are not implemented.
 
@@ -1198,7 +1220,7 @@ packages/
     adapter-nuxt/   # Nuxt server route integration
     vercel/         # Vercel API service
     github/         # GitHub API service
-    google/         # Google OAuth 2.0 / OIDC + Gmail, Calendar, Drive
+    google/         # Google OAuth 2.0 / OIDC + Gmail, Calendar, Drive, Docs, Sheets
     slack/          # Slack Web API, OAuth v2, incoming webhooks
     linear/         # Linear GraphQL API, OAuth, webhooks
     twilio/         # Twilio Messaging, Verify, Voice, webhooks

@@ -393,8 +393,8 @@ packages/
     adapter-nuxt/    # Nuxt server route integration
     vercel/          # Vercel API service plugin
     github/          # GitHub API service plugin
-    google/          # Google OAuth 2.0 / OIDC plugin
-    slack/           # Slack Web API, OAuth, incoming webhooks plugin
+    google/          # Google OAuth, Gmail, Calendar, Drive, Docs, Sheets plugin
+    slack/           # Slack Web API, message search, OAuth, webhooks plugin
     linear/          # Linear GraphQL API, OAuth, webhooks plugin
     twilio/          # Twilio Messaging, Verify, Voice, webhooks plugin
     apple/           # Sign in with Apple / OIDC plugin

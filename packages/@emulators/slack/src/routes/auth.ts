@@ -1,4 +1,4 @@
-import type { RouteContext } from "@emulators/core";
+import type { Context, RouteContext } from "@emulators/core";
 import { getSlackStore } from "../store.js";
 import { slackOk, slackError } from "../helpers.js";
 
@@ -7,7 +7,7 @@ export function authRoutes(ctx: RouteContext): void {
   const ss = () => getSlackStore(store);
 
   // auth.test - verify token, return user/team info
-  app.post("/api/auth.test", (c) => {
+  const authTest = (c: Context) => {
     const authUser = c.get("authUser");
     if (!authUser) {
       return slackError(c, "not_authed");
@@ -48,5 +48,7 @@ export function authRoutes(ctx: RouteContext): void {
       app_id: tokenRecord?.app_id,
       app_name: installation?.app_name,
     });
-  });
+  };
+  app.get("/api/auth.test", authTest);
+  app.post("/api/auth.test", authTest);
 }

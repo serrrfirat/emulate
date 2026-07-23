@@ -24,6 +24,9 @@ npm install @emulators/slack
 - `POST /api/chat.scheduledMessages.list` — list pending scheduled messages
 - `POST /api/chat.meMessage` — /me message
 
+### Search
+- `GET /api/search.messages` / `POST /api/search.messages` — search visible messages by text, `from:`, and `in:` with page pagination
+
 ### Conversations
 - `POST /api/conversations.list` — list conversations (cursor pagination, `types`, `exclude_archived`)
 - `POST /api/conversations.info` — get channel info
@@ -91,7 +94,7 @@ Modal opens and pushes require values from `/api/views.generateTriggerId`. Pass 
 
 ## Auth
 
-All Web API endpoints require `Authorization: Bearer <token>`. Seeded OAuth apps create local installation state, and the OAuth v2 flow with user picker UI returns Slack-style bot tokens. Scope checks are relaxed by default for local development. Set `strict_scopes: true` in Slack seed config to return Slack-style `missing_scope` errors when a token lacks the required method scope. Strict mode checks `chat:write`, `channels:read`, `channels:history`, `channels:join`, `channels:manage`, `channels:write`, `groups:read`, `groups:history`, `groups:write`, `im:read`, `im:history`, `im:write`, `mpim:read`, `mpim:history`, `mpim:write`, `users:read`, `users:read.email`, `users.profile:read`, `users.profile:write`, `users:write`, `files:read`, `files:write`, `pins:read`, `pins:write`, `bookmarks:read`, `bookmarks:write`, `reactions:read`, `reactions:write`, and `team:read`. Slack lists no method-specific scopes for `views.publish`, `views.open`, `views.update`, or `views.push`, so the emulator requires auth but does not add strict-scope checks for those methods.
+All Web API endpoints require `Authorization: Bearer <token>`. Seeded OAuth apps create local installation state, and the OAuth v2 flow with user picker UI returns Slack-style bot tokens. Scope checks are relaxed by default for local development. Set `strict_scopes: true` in Slack seed config to return Slack-style `missing_scope` errors when a token lacks the required method scope. Strict mode checks `chat:write`, `channels:read`, `channels:history`, `channels:join`, `channels:manage`, `channels:write`, `groups:read`, `groups:history`, `groups:write`, `im:read`, `im:history`, `im:write`, `mpim:read`, `mpim:history`, `mpim:write`, `users:read`, `users:read.email`, `users.profile:read`, `users.profile:write`, `users:write`, `files:read`, `files:write`, `pins:read`, `pins:write`, `bookmarks:read`, `bookmarks:write`, `reactions:read`, `reactions:write`, `team:read`, and `search:read`. Slack lists no method-specific scopes for `views.publish`, `views.open`, `views.update`, or `views.push`, so the emulator requires auth but does not add strict-scope checks for those methods.
 
 ## Current Limits
 
@@ -157,6 +160,7 @@ slack:
         - reactions:read
         - reactions:write
         - team:read
+        - search:read
       user_scopes:
         - users:read
         - users.profile:read
@@ -194,6 +198,7 @@ slack:
         - reactions:read
         - reactions:write
         - team:read
+        - search:read
   strict_scopes: false
 ```
 

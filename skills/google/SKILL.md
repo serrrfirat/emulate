@@ -1,12 +1,12 @@
 ---
 name: google
-description: Emulated Google OAuth 2.0, OpenID Connect, Gmail, Calendar, and Drive for local development and testing. Use when the user needs to test Google sign-in locally, emulate OIDC discovery, handle Google token exchange, configure Google OAuth clients, work with Gmail messages/drafts/threads/labels, manage Calendar events, upload or list Drive files, or work with Google userinfo without hitting real Google APIs. Triggers include "Google OAuth", "emulate Google", "mock Google login", "test Google sign-in", "OIDC emulator", "Google OIDC", "Gmail API", "Google Calendar", "Google Drive", "local Google auth", or any task requiring a local Google API.
+description: Emulated Google OAuth 2.0, OpenID Connect, Gmail, Calendar, Drive, Docs, and Sheets for local development and testing. Use when the user needs to test Google sign-in locally, emulate OIDC discovery, handle Google token exchange, configure Google OAuth clients, work with Gmail messages/drafts/threads/labels, manage Calendar events, upload or list Drive files, edit documents, read or write spreadsheet values, or work with Google userinfo without hitting real Google APIs.
 allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 ---
 
-# Google OAuth 2.0 / OIDC + Gmail, Calendar & Drive Emulator
+# Google OAuth 2.0 / OIDC + Gmail, Calendar, Drive, Docs & Sheets Emulator
 
-OAuth 2.0 and OpenID Connect emulation with authorization code flow, PKCE support, ID tokens, OIDC discovery, refresh tokens, plus Gmail, Google Calendar, and Google Drive REST API surfaces.
+OAuth 2.0 and OpenID Connect emulation with authorization code flow, PKCE support, ID tokens, OIDC discovery, refresh tokens, plus Gmail, Google Calendar, Drive, Docs, and Sheets REST API surfaces.
 
 ## Start
 
@@ -47,6 +47,8 @@ GOOGLE_EMULATOR_URL=http://localhost:4002
 | `https://gmail.googleapis.com/gmail/v1/...` | `$GOOGLE_EMULATOR_URL/gmail/v1/...` |
 | `https://www.googleapis.com/calendar/v3/...` | `$GOOGLE_EMULATOR_URL/calendar/v3/...` |
 | `https://www.googleapis.com/drive/v3/...` | `$GOOGLE_EMULATOR_URL/drive/v3/...` |
+| `https://docs.googleapis.com/v1/...` | `$GOOGLE_EMULATOR_URL/v1/...` |
+| `https://sheets.googleapis.com/v4/...` | `$GOOGLE_EMULATOR_URL/v4/...` |
 
 ### google-auth-library (Node.js)
 
@@ -175,6 +177,21 @@ google:
       mime_type: text/markdown
       parent_ids: [drv_docs]
       data: "# Hello World"
+  documents:
+    - id: doc_runbook
+      user_email: testuser@gmail.com
+      title: Incident Runbook
+      body: Check the service dashboard first.
+  spreadsheets:
+    - id: sheet_tracker
+      user_email: testuser@gmail.com
+      title: Bug Tracker
+      sheets:
+        - id: 17
+          title: Bugs
+          values:
+            - [ID, Status]
+            - [BUG-1, Open]
 ```
 
 When no OAuth clients are configured, the emulator accepts any `client_id`. With clients configured, strict validation is enforced for `client_id`, `client_secret`, and `redirect_uri`.
@@ -539,6 +556,14 @@ curl -X PATCH "http://localhost:4002/drive/v3/files/drv_readme?addParents=folder
   -H "Content-Type: application/json" \
   -d '{"name": "README-updated.md"}'
 ```
+
+## Google Docs API
+
+Use `POST /v1/documents` to create a document, `GET /v1/documents/:documentId` to read its structural text content, and `POST /v1/documents/:documentId:batchUpdate` for `insertText`, `deleteContentRange`, `replaceAllText`, and common formatting requests.
+
+## Google Sheets API
+
+Use `POST /v4/spreadsheets` and `GET /v4/spreadsheets/:spreadsheetId` for spreadsheet metadata. A1 ranges support value reads, writes, appends, clears, and batch reads. `POST /v4/spreadsheets/:spreadsheetId:batchUpdate` supports adding, deleting, renaming, and accepting common formatting requests.
 
 ## Common Patterns
 
