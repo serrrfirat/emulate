@@ -23,6 +23,9 @@ import { rateLimitRoutes } from "./routes/rate-limit.js";
 import { metaRoutes } from "./routes/meta.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { appsRoutes } from "./routes/apps.js";
+import { contentsRoutes } from "./routes/contents.js";
+import { graphqlRoutes } from "./routes/graphql.js";
+import { statusesRoutes } from "./routes/statuses.js";
 
 export { getGitHubStore, type GitHubStore } from "./store.js";
 export * from "./entities.js";
@@ -56,6 +59,56 @@ export interface GitHubSeedConfig {
     topics?: string[];
     default_branch?: string;
     auto_init?: boolean;
+  }>;
+  workflows?: Array<{
+    id?: number;
+    owner: string;
+    repo: string;
+    name: string;
+    path: string;
+    state?: "active" | "disabled_manually" | "disabled_inactivity";
+    badge_url?: string;
+  }>;
+  workflow_runs?: Array<{
+    id?: number;
+    owner: string;
+    repo: string;
+    workflow_id: number;
+    name?: string;
+    head_branch?: string;
+    head_sha?: string;
+    run_number?: number;
+    event?: string;
+    status?: "queued" | "in_progress" | "completed";
+    conclusion?: "success" | "failure" | "neutral" | "cancelled" | "skipped" | "timed_out" | "action_required";
+    actor?: string;
+    run_attempt?: number;
+    run_started_at?: string;
+    logs?: string;
+  }>;
+  jobs?: Array<{
+    id?: number;
+    owner: string;
+    repo: string;
+    run_id: number;
+    name: string;
+    status?: "queued" | "in_progress" | "completed";
+    conclusion?: "success" | "failure" | "neutral" | "cancelled" | "skipped" | "timed_out" | "action_required";
+    started_at?: string;
+    completed_at?: string;
+    runner_id?: number;
+    runner_name?: string;
+    logs?: string;
+  }>;
+  artifacts?: Array<{
+    id?: number;
+    owner: string;
+    repo: string;
+    run_id: number;
+    name: string;
+    size_in_bytes?: number;
+    expired?: boolean;
+    expires_at?: string;
   }>;
   oauth_apps?: Array<{
     client_id: string;
@@ -249,6 +302,16 @@ export function seedFromConfig(store: Store, baseUrl: string, config: GitHubSeed
       if (r.auto_init !== false) {
         const sha = generateSha();
         const treeSha = generateSha();
+        const readmeContent = `# ${r.name}\n`;
+        const readmeBlob = gh.blobs.insert({
+          repo_id: repo.id,
+          sha: generateSha(),
+          node_id: "",
+          content: readmeContent,
+          encoding: "utf-8",
+          size: Buffer.byteLength(readmeContent, "utf8"),
+        });
+        gh.blobs.update(readmeBlob.id, { node_id: generateNodeId("Blob", readmeBlob.id) });
 
         const commit = gh.commits.insert({
           repo_id: repo.id,
@@ -271,7 +334,15 @@ export function seedFromConfig(store: Store, baseUrl: string, config: GitHubSeed
           repo_id: repo.id,
           sha: treeSha,
           node_id: "",
-          tree: [{ path: "README.md", mode: "100644", type: "blob", sha: generateSha(), size: 20 }],
+          tree: [
+            {
+              path: "README.md",
+              mode: "100644",
+              type: "blob",
+              sha: readmeBlob.sha,
+              size: readmeBlob.size,
+            },
+          ],
           truncated: false,
         });
         gh.trees.update(tree.id, { node_id: generateNodeId("Tree", tree.id) });
@@ -305,6 +376,112 @@ export function seedFromConfig(store: Store, baseUrl: string, config: GitHubSeed
           gh.orgs.update(org.id, { public_repos: org.public_repos + 1 });
         }
       }
+    }
+  }
+
+  if (config.workflows) {
+    for (const workflow of config.workflows) {
+      const repo = gh.repos.findOneBy("full_name", `${workflow.owner}/${workflow.repo}`);
+      if (!repo) continue;
+      const existing = workflow.id
+        ? gh.workflows.get(workflow.id)
+        : gh.workflows.findBy("repo_id", repo.id).find((candidate) => candidate.path === workflow.path);
+      if (existing) continue;
+      const row = gh.workflows.insert({
+        id: workflow.id,
+        node_id: "",
+        repo_id: repo.id,
+        name: workflow.name,
+        path: workflow.path,
+        state: workflow.state ?? "active",
+        badge_url:
+          workflow.badge_url ??
+          `${baseUrl}/${repo.full_name}/actions/workflows/${encodeURIComponent(workflow.path)}/badge.svg`,
+      });
+      gh.workflows.update(row.id, { node_id: generateNodeId("Workflow", row.id) });
+    }
+  }
+
+  if (config.workflow_runs) {
+    for (const seeded of config.workflow_runs) {
+      const repo = gh.repos.findOneBy("full_name", `${seeded.owner}/${seeded.repo}`);
+      const workflow = gh.workflows.get(seeded.workflow_id);
+      const actor = gh.users.findOneBy("login", seeded.actor ?? seeded.owner);
+      if (!repo || !workflow || workflow.repo_id !== repo.id || !actor) continue;
+      if (seeded.id && gh.workflowRuns.get(seeded.id)) continue;
+      const branchName = seeded.head_branch ?? repo.default_branch;
+      const branch = gh.branches.findBy("repo_id", repo.id).find((candidate) => candidate.name === branchName);
+      const now = seeded.run_started_at ?? new Date().toISOString();
+      const status = seeded.status ?? "completed";
+      const row = gh.workflowRuns.insert({
+        id: seeded.id,
+        node_id: "",
+        repo_id: repo.id,
+        workflow_id: workflow.id,
+        name: seeded.name ?? workflow.name,
+        head_branch: branchName,
+        head_sha: seeded.head_sha ?? branch?.sha ?? generateSha(),
+        run_number:
+          seeded.run_number ??
+          gh.workflowRuns
+            .findBy("workflow_id", workflow.id)
+            .filter((candidate) => candidate.repo_id === repo.id)
+            .reduce((max, candidate) => Math.max(max, candidate.run_number), 0) + 1,
+        event: seeded.event ?? "push",
+        status,
+        conclusion: status === "completed" ? (seeded.conclusion ?? "success") : null,
+        actor_id: actor.id,
+        run_attempt: seeded.run_attempt ?? 1,
+        run_started_at: now,
+        logs: seeded.logs ?? null,
+      });
+      gh.workflowRuns.update(row.id, { node_id: generateNodeId("WorkflowRun", row.id) });
+    }
+  }
+
+  if (config.jobs) {
+    for (const seeded of config.jobs) {
+      const repo = gh.repos.findOneBy("full_name", `${seeded.owner}/${seeded.repo}`);
+      const run = gh.workflowRuns.get(seeded.run_id);
+      if (!repo || !run || run.repo_id !== repo.id) continue;
+      if (seeded.id && gh.jobs.get(seeded.id)) continue;
+      const status = seeded.status ?? "completed";
+      const row = gh.jobs.insert({
+        id: seeded.id,
+        node_id: "",
+        repo_id: repo.id,
+        run_id: run.id,
+        name: seeded.name,
+        status,
+        conclusion: status === "completed" ? (seeded.conclusion ?? "success") : null,
+        started_at: seeded.started_at ?? run.run_started_at,
+        completed_at: status === "completed" ? (seeded.completed_at ?? run.updated_at) : null,
+        runner_id: seeded.runner_id ?? 1,
+        runner_name: seeded.runner_name ?? "Hosted Agent",
+        logs: seeded.logs ?? null,
+        steps: [],
+      });
+      gh.jobs.update(row.id, { node_id: generateNodeId("Job", row.id) });
+    }
+  }
+
+  if (config.artifacts) {
+    for (const seeded of config.artifacts) {
+      const repo = gh.repos.findOneBy("full_name", `${seeded.owner}/${seeded.repo}`);
+      const run = gh.workflowRuns.get(seeded.run_id);
+      if (!repo || !run || run.repo_id !== repo.id) continue;
+      if (seeded.id && gh.artifacts.get(seeded.id)) continue;
+      const row = gh.artifacts.insert({
+        id: seeded.id,
+        node_id: "",
+        repo_id: repo.id,
+        run_id: run.id,
+        name: seeded.name,
+        size_in_bytes: seeded.size_in_bytes ?? 0,
+        expired: seeded.expired ?? false,
+        expires_at: seeded.expires_at ?? new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+      gh.artifacts.update(row.id, { node_id: generateNodeId("Artifact", row.id) });
     }
   }
 
@@ -483,6 +660,8 @@ export const githubPlugin: ServicePlugin = {
     reviewsRoutes(ctx);
     labelsAndMilestonesRoutes(ctx);
     branchesAndGitRoutes(ctx);
+    contentsRoutes(ctx);
+    statusesRoutes(ctx);
     orgsAndTeamsRoutes(ctx);
     releasesRoutes(ctx);
     webhooksRoutes(ctx);
@@ -493,6 +672,7 @@ export const githubPlugin: ServicePlugin = {
     metaRoutes(ctx);
     oauthRoutes(ctx);
     appsRoutes(ctx);
+    graphqlRoutes(ctx);
   },
   seed(store: Store, baseUrl: string): void {
     seedDefaults(store, baseUrl);

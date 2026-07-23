@@ -219,3 +219,44 @@ export interface GoogleSpreadsheet extends Entity {
   user_email: string;
   sheets: GoogleSheet[];
 }
+
+export interface GoogleSlideStyleRun {
+  start_index: number;
+  end_index: number;
+  style: Record<string, unknown>;
+}
+
+interface GoogleSlideElementBase {
+  object_id: string;
+  size: Record<string, unknown> | null;
+  transform: Record<string, unknown> | null;
+}
+
+export interface GoogleSlideShapeElement extends GoogleSlideElementBase {
+  element_type: "shape";
+  shape_type: string;
+  placeholder_type: string | null;
+  text: string;
+  text_style_runs: GoogleSlideStyleRun[];
+  paragraph_style_runs: GoogleSlideStyleRun[];
+}
+
+export interface GoogleSlideImageElement extends GoogleSlideElementBase {
+  element_type: "image";
+  image_url: string;
+}
+
+export type GoogleSlideElement = GoogleSlideShapeElement | GoogleSlideImageElement;
+
+export interface GoogleSlide {
+  object_id: string;
+  layout_object_id: string;
+  page_elements: GoogleSlideElement[];
+}
+
+export interface GooglePresentation extends Entity {
+  google_id: string;
+  user_email: string;
+  revision_id: string;
+  slides: GoogleSlide[];
+}

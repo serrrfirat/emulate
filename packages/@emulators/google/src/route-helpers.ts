@@ -26,9 +26,21 @@ export function requireGmailUser(c: Context): string | Response {
   return authEmail;
 }
 
-export async function parseGoogleBody(c: Context): Promise<Record<string, unknown>> {
+export async function parseGoogleBody(c: Context): Promise<Record<string, unknown>>;
+export async function parseGoogleBody(c: Context, maxBytes: number): Promise<Record<string, unknown> | Response>;
+export async function parseGoogleBody(c: Context, maxBytes?: number): Promise<Record<string, unknown> | Response> {
   const contentType = c.req.header("Content-Type") ?? "";
+  const contentLength = c.req.header("Content-Length");
+  if (maxBytes !== undefined && contentLength !== undefined) {
+    const declaredBytes = Number.parseInt(contentLength, 10);
+    if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+      return googleApiError(c, 413, "Request body is too large.", "badRequest", "RESOURCE_EXHAUSTED");
+    }
+  }
   const rawText = await c.req.text();
+  if (maxBytes !== undefined && Buffer.byteLength(rawText, "utf8") > maxBytes) {
+    return googleApiError(c, 413, "Request body is too large.", "badRequest", "RESOURCE_EXHAUSTED");
+  }
 
   if (!rawText) return {};
 

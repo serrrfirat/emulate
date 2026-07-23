@@ -256,6 +256,27 @@ function createTestApp() {
         ],
       },
     ],
+    presentations: [
+      {
+        id: "slides_launch",
+        user_email: "testuser@example.com",
+        title: "Launch Review",
+        slides: [
+          {
+            id: "slide_seeded",
+            layout: "TITLE_AND_BODY",
+            elements: [
+              {
+                id: "shape_seeded",
+                type: "shape",
+                shape_type: "TEXT_BOX",
+                text: "Seeded launch notes",
+              },
+            ],
+          },
+        ],
+      },
+    ],
     drive_permissions: [
       {
         id: "perm_seeded_doc",
@@ -1502,7 +1523,7 @@ describe("Google plugin integration", () => {
     });
     expect(sheetShareRes.status).toBe(200);
 
-    for (const fileId of ["doc_runbook", "sheet_tracker"]) {
+    for (const fileId of ["doc_runbook", "sheet_tracker", "slides_launch"]) {
       const deleteRes = await isolatedApp.request(`${base}/drive/v3/files/${fileId}`, {
         method: "DELETE",
         headers: authHeaders(),
@@ -1514,17 +1535,25 @@ describe("Google plugin integration", () => {
     const spreadsheetRes = await isolatedApp.request(`${base}/v4/spreadsheets/sheet_tracker`, {
       headers: authHeaders(),
     });
+    const presentationRes = await isolatedApp.request(`${base}/v1/presentations/slides_launch`, {
+      headers: authHeaders(),
+    });
     expect(documentRes.status).toBe(404);
     expect(spreadsheetRes.status).toBe(404);
+    expect(presentationRes.status).toBe(404);
 
     const googleStore = getGoogleStore(store);
     expect(googleStore.documents.findOneBy("google_id", "doc_runbook")).toBeUndefined();
     expect(googleStore.spreadsheets.findOneBy("google_id", "sheet_tracker")).toBeUndefined();
+    expect(googleStore.presentations.findOneBy("google_id", "slides_launch")).toBeUndefined();
     expect(
       googleStore.drivePermissions
         .all()
         .filter(
-          (permission) => permission.file_google_id === "doc_runbook" || permission.file_google_id === "sheet_tracker",
+          (permission) =>
+            permission.file_google_id === "doc_runbook" ||
+            permission.file_google_id === "sheet_tracker" ||
+            permission.file_google_id === "slides_launch",
         ),
     ).toEqual([]);
   });
@@ -2003,5 +2032,561 @@ describe("Google plugin integration", () => {
     const read = (await readRes.json()) as { values: unknown[][] };
     expect(read.values[0]).toEqual(["alpha", "beta"]);
     expect(read.values.flat()).toEqual(expect.arrayContaining(["gamma", "delta"]));
+  });
+
+  it("reads seeded Slides and returns deterministic thumbnails", async () => {
+    const presentationRes = await app.request(`${base}/v1/presentations/slides_launch`, {
+      headers: authHeaders(),
+    });
+    expect(presentationRes.status).toBe(200);
+    expect(await presentationRes.json()).toMatchObject({
+      presentationId: "slides_launch",
+      title: "Launch Review",
+      slides: [
+        {
+          objectId: "slide_seeded",
+          slideProperties: { layoutObjectId: "layout_title_and_body" },
+          pageElements: [
+            {
+              objectId: "shape_seeded",
+              shape: {
+                shapeType: "TEXT_BOX",
+                text: {
+                  textElements: expect.arrayContaining([
+                    expect.objectContaining({ textRun: { content: "Seeded launch notes", style: {} } }),
+                  ]),
+                },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const thumbnailRes = await app.request(`${base}/v1/presentations/slides_launch/pages/slide_seeded/thumbnail`, {
+      headers: authHeaders(),
+    });
+    expect(thumbnailRes.status).toBe(200);
+    expect(await thumbnailRes.json()).toMatchObject({
+      contentUrl: expect.stringMatching(/^data:image\/svg\+xml,/),
+      width: 1600,
+      height: 900,
+    });
+  });
+
+  it("applies mixed Slides batches with stateful text, elements, and styles", async () => {
+    const createRes = await jsonRequest(app, "/v1/presentations", {
+      method: "POST",
+      body: { title: "Provider Review" },
+    });
+    expect(createRes.status).toBe(200);
+    const created = (await createRes.json()) as {
+      presentationId: string;
+      revisionId: string;
+      slides: Array<{ objectId: string }>;
+    };
+    expect(created.slides).toHaveLength(1);
+
+    const firstBatchRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        writeControl: { requiredRevisionId: created.revisionId },
+        requests: [
+          {
+            createSlide: {
+              objectId: "slide_work",
+              insertionIndex: 1,
+              slideLayoutReference: { predefinedLayout: "BLANK" },
+            },
+          },
+          {
+            createShape: {
+              objectId: "shape_body",
+              shapeType: "TEXT_BOX",
+              elementProperties: {
+                pageObjectId: "slide_work",
+                size: {
+                  width: { magnitude: 4_000_000, unit: "EMU" },
+                  height: { magnitude: 1_000_000, unit: "EMU" },
+                },
+                transform: { translateX: 10, translateY: 20, unit: "EMU" },
+              },
+            },
+          },
+          { insertText: { objectId: "shape_body", text: "Launch token", insertionIndex: 0 } },
+          {
+            updateTextStyle: {
+              objectId: "shape_body",
+              textRange: { type: "ALL" },
+              style: { bold: true, fontFamily: "Inter" },
+              fields: "bold,fontFamily",
+            },
+          },
+          {
+            updateParagraphStyle: {
+              objectId: "shape_body",
+              textRange: { type: "ALL" },
+              style: { alignment: "CENTER" },
+              fields: "alignment",
+            },
+          },
+          {
+            createImage: {
+              objectId: "image_logo",
+              url: "https://example.com/logo.png",
+              elementProperties: { pageObjectId: "slide_work" },
+            },
+          },
+        ],
+      },
+    });
+    expect(firstBatchRes.status).toBe(200);
+    const firstBatch = (await firstBatchRes.json()) as {
+      replies: Array<Record<string, unknown>>;
+      writeControl: { requiredRevisionId: string };
+    };
+    expect(firstBatch.replies).toMatchObject([
+      { createSlide: { objectId: "slide_work" } },
+      { createShape: { objectId: "shape_body" } },
+      {},
+      {},
+      {},
+      { createImage: { objectId: "image_logo" } },
+    ]);
+
+    const secondBatchRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        writeControl: { requiredRevisionId: firstBatch.writeControl.requiredRevisionId },
+        requests: [
+          {
+            createShape: {
+              objectId: "shape_replace",
+              shapeType: "RECTANGLE",
+              elementProperties: { pageObjectId: "slide_work" },
+            },
+          },
+          { insertText: { objectId: "shape_replace", text: "Replace this logo", insertionIndex: 0 } },
+          {
+            deleteText: {
+              objectId: "shape_body",
+              textRange: { type: "FIXED_RANGE", startIndex: 7, endIndex: 12 },
+            },
+          },
+          {
+            replaceAllText: {
+              containsText: { text: "Launch", matchCase: true },
+              replaceText: "Ship",
+            },
+          },
+          {
+            replaceAllShapesWithImage: {
+              containsText: { text: "replace this", matchCase: false },
+              imageUrl: "https://example.com/replacement.png",
+              imageReplaceMethod: "CENTER_INSIDE",
+            },
+          },
+          { deleteObject: { objectId: "image_logo" } },
+          {
+            createSlide: {
+              objectId: "slide_temporary",
+              slideLayoutReference: { predefinedLayout: "BLANK" },
+            },
+          },
+          { deleteObject: { objectId: "slide_temporary" } },
+        ],
+      },
+    });
+    expect(secondBatchRes.status).toBe(200);
+    const secondBatch = (await secondBatchRes.json()) as {
+      replies: Array<{
+        replaceAllText?: { occurrencesChanged: number };
+        replaceAllShapesWithImage?: { occurrencesChanged: number };
+      }>;
+    };
+    expect(secondBatch.replies[3].replaceAllText?.occurrencesChanged).toBe(1);
+    expect(secondBatch.replies[4].replaceAllShapesWithImage?.occurrencesChanged).toBe(1);
+
+    const readRes = await app.request(`${base}/v1/presentations/${created.presentationId}`, {
+      headers: authHeaders(),
+    });
+    expect(readRes.status).toBe(200);
+    const presentation = (await readRes.json()) as {
+      slides: Array<{
+        objectId: string;
+        pageElements: Array<{
+          objectId: string;
+          image?: { contentUrl: string };
+          shape?: {
+            text: {
+              textElements: Array<{
+                paragraphMarker?: { style: Record<string, unknown> };
+                textRun?: { content: string; style: Record<string, unknown> };
+              }>;
+            };
+          };
+        }>;
+      }>;
+    };
+    const workSlide = presentation.slides.find((slide) => slide.objectId === "slide_work");
+    expect(workSlide).toBeDefined();
+    expect(workSlide?.pageElements.map((element) => element.objectId)).toEqual(["shape_body", "shape_replace"]);
+    const bodyShape = workSlide?.pageElements.find((element) => element.objectId === "shape_body")?.shape;
+    expect(bodyShape?.text.textElements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ paragraphMarker: { style: { alignment: "CENTER" } } }),
+        expect.objectContaining({ textRun: { content: "Ship ", style: { bold: true, fontFamily: "Inter" } } }),
+      ]),
+    );
+    expect(workSlide?.pageElements.find((element) => element.objectId === "shape_replace")).toMatchObject({
+      image: { contentUrl: "https://example.com/replacement.png" },
+    });
+  });
+
+  it("rejects invalid mixed Slides batches without persisting earlier requests", async () => {
+    const createRes = await jsonRequest(app, "/v1/presentations", {
+      method: "POST",
+      body: { title: "Atomic Slides" },
+    });
+    const created = (await createRes.json()) as {
+      presentationId: string;
+      slides: Array<{ objectId: string }>;
+    };
+    const slideId = created.slides[0].objectId;
+
+    const setupRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          {
+            createShape: {
+              objectId: "shape_atomic",
+              shapeType: "TEXT_BOX",
+              elementProperties: { pageObjectId: slideId },
+            },
+          },
+        ],
+      },
+    });
+    expect(setupRes.status).toBe(200);
+
+    const invalidRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          { insertText: { objectId: "shape_atomic", text: "must roll back", insertionIndex: 0 } },
+          { unsupportedMutation: { objectId: "shape_atomic" } },
+        ],
+      },
+    });
+    expect(invalidRes.status).toBe(400);
+
+    const readRes = await app.request(`${base}/v1/presentations/${created.presentationId}`, {
+      headers: authHeaders(),
+    });
+    const presentation = (await readRes.json()) as {
+      slides: Array<{ pageElements: Array<{ objectId: string; shape: { text: { textElements: unknown[] } } }> }>;
+    };
+    const shape = presentation.slides
+      .flatMap((slide) => slide.pageElements)
+      .find((element) => element.objectId === "shape_atomic");
+    expect(shape?.shape.text.textElements).toHaveLength(1);
+  });
+
+  it("rejects malformed and oversized Slides batches without partial updates", async () => {
+    const createRes = await jsonRequest(app, "/v1/presentations", {
+      method: "POST",
+      body: { title: "Bounded Slides" },
+    });
+    const created = (await createRes.json()) as {
+      presentationId: string;
+      slides: Array<{ objectId: string }>;
+    };
+    const slideId = created.slides[0].objectId;
+    const setupRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          {
+            createShape: {
+              objectId: "shape_bounded",
+              shapeType: "TEXT_BOX",
+              elementProperties: { pageObjectId: slideId },
+            },
+          },
+        ],
+      },
+    });
+    expect(setupRes.status).toBe(200);
+
+    const malformedRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          { insertText: { objectId: "shape_bounded", text: "must roll back", insertionIndex: 0 } },
+          "not a request",
+        ],
+      },
+    });
+    expect(malformedRes.status).toBe(400);
+
+    for (const requests of [undefined, [], [null]]) {
+      const invalidRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+        method: "POST",
+        body: requests === undefined ? {} : { requests },
+      });
+      expect(invalidRes.status).toBe(400);
+    }
+
+    const tooManyRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: Array.from({ length: 1_001 }, () => ({
+          deleteObject: { objectId: "missing" },
+        })),
+      },
+    });
+    expect(tooManyRes.status).toBe(413);
+
+    const oversizedTextRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [{ insertText: { objectId: "shape_bounded", text: "x".repeat(1_000_001) } }],
+      },
+    });
+    expect(oversizedTextRes.status).toBe(413);
+
+    const oversizedBodyRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [{ insertText: { objectId: "shape_bounded", text: "x".repeat(2 * 1024 * 1024) } }],
+      },
+    });
+    expect(oversizedBodyRes.status).toBe(413);
+
+    const readRes = await app.request(`${base}/v1/presentations/${created.presentationId}`, {
+      headers: authHeaders(),
+    });
+    const presentation = (await readRes.json()) as {
+      slides: Array<{
+        pageElements: Array<{
+          objectId: string;
+          shape?: { text: { textElements: Array<{ textRun?: { content: string } }> } };
+        }>;
+      }>;
+    };
+    const shape = presentation.slides
+      .flatMap((slide) => slide.pageElements)
+      .find((element) => element.objectId === "shape_bounded");
+    expect(shape?.shape?.text.textElements.flatMap((entry) => entry.textRun?.content ?? []).join("")).toBe("");
+  });
+
+  it("allows only one concurrent Slides writer for a required revision", async () => {
+    const createRes = await jsonRequest(app, "/v1/presentations", {
+      method: "POST",
+      body: { title: "Concurrent Slides" },
+    });
+    const created = (await createRes.json()) as {
+      presentationId: string;
+      revisionId: string;
+      slides: Array<{ objectId: string }>;
+    };
+
+    const concurrent = await Promise.all(
+      ["slide_writer_a", "slide_writer_b"].map((objectId) =>
+        jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+          method: "POST",
+          body: {
+            writeControl: { requiredRevisionId: created.revisionId },
+            requests: [{ createSlide: { objectId } }],
+          },
+        }),
+      ),
+    );
+    expect(concurrent.map((response) => response.status).sort()).toEqual([200, 400]);
+
+    const staleRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        writeControl: { requiredRevisionId: created.revisionId },
+        requests: [{ createSlide: { objectId: "slide_stale" } }],
+      },
+    });
+    expect(staleRes.status).toBe(400);
+    expect(await staleRes.json()).toMatchObject({
+      error: { status: "FAILED_PRECONDITION" },
+    });
+
+    const readRes = await app.request(`${base}/v1/presentations/${created.presentationId}`, {
+      headers: authHeaders(),
+    });
+    const presentation = (await readRes.json()) as { slides: Array<{ objectId: string }> };
+    expect(
+      presentation.slides.filter((slide) => ["slide_writer_a", "slide_writer_b"].includes(slide.objectId)),
+    ).toHaveLength(1);
+    expect(presentation.slides.map((slide) => slide.objectId)).not.toContain("slide_stale");
+  });
+
+  it("validates Slides numeric boundaries, duplicate IDs, and ranges atomically", async () => {
+    const createRes = await jsonRequest(app, "/v1/presentations", {
+      method: "POST",
+      body: { title: "Validated Slides" },
+    });
+    const created = (await createRes.json()) as {
+      presentationId: string;
+      slides: Array<{ objectId: string }>;
+    };
+    const slideId = created.slides[0].objectId;
+
+    const setupRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          {
+            createShape: {
+              objectId: "shape_validated",
+              shapeType: "TEXT_BOX",
+              elementProperties: { pageObjectId: slideId },
+            },
+          },
+          { insertText: { objectId: "shape_validated", text: "abcdef", insertionIndex: 0 } },
+        ],
+      },
+    });
+    expect(setupRes.status).toBe(200);
+
+    const invalidBatches = [
+      {
+        requests: [
+          { insertText: { objectId: "shape_validated", text: "rollback", insertionIndex: 6 } },
+          { createSlide: { objectId: slideId } },
+        ],
+      },
+      {
+        requests: [
+          { createSlide: { objectId: "slide_never_created" } },
+          { createSlide: { objectId: "slide_never_created" } },
+        ],
+      },
+      {
+        requests: [
+          { insertText: { objectId: "shape_validated", text: "rollback", insertionIndex: 6 } },
+          { createSlide: { objectId: "invalid_index", insertionIndex: Number.MAX_SAFE_INTEGER } },
+        ],
+      },
+      {
+        requests: [
+          { insertText: { objectId: "shape_validated", text: "rollback", insertionIndex: 6 } },
+          {
+            updateTextStyle: {
+              objectId: "shape_validated",
+              textRange: { type: "FIXED_RANGE", startIndex: -1, endIndex: 99 },
+              style: { bold: true },
+            },
+          },
+        ],
+      },
+    ];
+
+    for (const body of invalidBatches) {
+      const invalidRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+        method: "POST",
+        body,
+      });
+      expect(invalidRes.status).toBe(400);
+    }
+
+    const readRes = await app.request(`${base}/v1/presentations/${created.presentationId}`, {
+      headers: authHeaders(),
+    });
+    const presentation = (await readRes.json()) as {
+      slides: Array<{
+        objectId: string;
+        pageElements: Array<{
+          objectId: string;
+          shape?: { text: { textElements: Array<{ textRun?: { content: string } }> } };
+        }>;
+      }>;
+    };
+    const shape = presentation.slides
+      .flatMap((slide) => slide.pageElements)
+      .find((element) => element.objectId === "shape_validated");
+    expect(shape?.shape?.text.textElements.flatMap((entry) => entry.textRun?.content ?? []).join("")).toBe("abcdef");
+    expect(presentation.slides.map((slide) => slide.objectId)).not.toContain("slide_never_created");
+  });
+
+  it("preserves range-specific Slides text and paragraph styles", async () => {
+    const createRes = await jsonRequest(app, "/v1/presentations", {
+      method: "POST",
+      body: { title: "Range Styles" },
+    });
+    const created = (await createRes.json()) as {
+      presentationId: string;
+      slides: Array<{ objectId: string }>;
+    };
+
+    const updateRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          {
+            createShape: {
+              objectId: "shape_ranges",
+              shapeType: "TEXT_BOX",
+              elementProperties: { pageObjectId: created.slides[0].objectId },
+            },
+          },
+          { insertText: { objectId: "shape_ranges", text: "abcdef", insertionIndex: 0 } },
+          {
+            updateTextStyle: {
+              objectId: "shape_ranges",
+              textRange: { type: "FIXED_RANGE", startIndex: 1, endIndex: 3 },
+              style: { bold: true },
+            },
+          },
+          {
+            updateParagraphStyle: {
+              objectId: "shape_ranges",
+              textRange: { type: "FIXED_RANGE", startIndex: 3, endIndex: 6 },
+              style: { alignment: "CENTER" },
+            },
+          },
+        ],
+      },
+    });
+    expect(updateRes.status).toBe(200);
+
+    const readRes = await app.request(`${base}/v1/presentations/${created.presentationId}`, {
+      headers: authHeaders(),
+    });
+    const presentation = (await readRes.json()) as {
+      slides: Array<{
+        pageElements: Array<{
+          objectId: string;
+          shape?: {
+            text: {
+              textElements: Array<{
+                textRun?: { content: string; style: Record<string, unknown> };
+                paragraphMarker?: { style: Record<string, unknown> };
+              }>;
+            };
+          };
+        }>;
+      }>;
+    };
+    const elements =
+      presentation.slides.flatMap((slide) => slide.pageElements).find((element) => element.objectId === "shape_ranges")
+        ?.shape?.text.textElements ?? [];
+    const textRuns = elements.flatMap((entry) => (entry.textRun ? [entry.textRun] : []));
+    expect(textRuns).toEqual([
+      { content: "a", style: {} },
+      { content: "bc", style: { bold: true } },
+      { content: "def", style: {} },
+    ]);
+    expect(
+      elements
+        .filter((entry) => entry.paragraphMarker?.style.alignment === "CENTER")
+        .map((entry) => entry.paragraphMarker),
+    ).toEqual([{ style: { alignment: "CENTER" } }]);
   });
 });

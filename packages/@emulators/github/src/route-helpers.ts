@@ -55,6 +55,13 @@ export function hasRepoAdmin(gh: GitHubStore, user: GitHubUser, repo: GitHubRepo
   return collab?.permission === "admin" || collab?.permission === "maintain";
 }
 
+export function hasRepoWrite(gh: GitHubStore, user: GitHubUser, repo: GitHubRepo): boolean {
+  if (repo.owner_type === "User" && repo.owner_id === user.id) return true;
+  if (repo.owner_type === "Organization" && isOrgMember(gh, user.id, repo.owner_id)) return true;
+  const collab = gh.collaborators.findBy("repo_id", repo.id).find((c) => c.user_id === user.id);
+  return collab?.permission === "push" || collab?.permission === "maintain" || collab?.permission === "admin";
+}
+
 export function assertRepoAdmin(gh: GitHubStore, authUser: AuthUser | undefined, repo: GitHubRepo): GitHubUser {
   if (!authUser) throw unauthorized();
   const user = getActorUser(gh, authUser);
@@ -63,10 +70,21 @@ export function assertRepoAdmin(gh: GitHubStore, authUser: AuthUser | undefined,
   throw forbidden();
 }
 
-export function assertRepoWrite(gh: GitHubStore, authUser: AuthUser | undefined, repo: GitHubRepo): GitHubUser {
+export function assertRepoWrite(
+  gh: GitHubStore,
+  authUser: AuthUser | undefined,
+  repo: GitHubRepo,
+  appPermission?: string,
+): GitHubUser {
   const user = assertAuthenticatedUser(gh, authUser);
-  if (!repo.private) return user;
-  if (!canAccessRepo(gh, authUser, repo)) throw forbidden();
+  if (!hasRepoWrite(gh, user, repo)) throw forbidden();
+  if (appPermission) {
+    const hasWriteScope =
+      authUser?.scopes.includes("repo") ||
+      (!repo.private && authUser?.scopes.includes("public_repo")) ||
+      authUser?.scopes.includes(`${appPermission}:write`);
+    if (!hasWriteScope) throw forbidden();
+  }
   return user;
 }
 

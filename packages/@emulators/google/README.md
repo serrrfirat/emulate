@@ -1,6 +1,6 @@
 # @emulators/google
 
-Google OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local Gmail, Calendar, Drive, Docs, and Sheets flows.
+Google OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local Gmail, Calendar, Drive, Docs, Sheets, and Slides flows.
 
 Part of [emulate](https://github.com/vercel-labs/emulate) — local drop-in replacement services for CI and no-network sandboxes.
 
@@ -110,6 +110,12 @@ Explicit user permissions grant read access. Writer and organizer permissions al
 - `GET /v4/spreadsheets/:spreadsheetId/values:batchGet` — read multiple ranges
 - `POST /v4/spreadsheets/:spreadsheetId:batchUpdate` — add, delete, rename, or format sheets
 
+### Slides
+- `POST /v1/presentations` — create a presentation
+- `GET /v1/presentations/:presentationId` — get presentation and slide content
+- `GET /v1/presentations/:presentationId/pages/:pageObjectId/thumbnail` — get a deterministic slide thumbnail
+- `POST /v1/presentations/:presentationId:batchUpdate` — create or delete slides, add shapes or images, and edit or style text
+
 ## Auth
 
 Standard OAuth 2.0 authorization code flow. Configure clients in the seed config.
@@ -193,6 +199,18 @@ google:
           values:
             - [ID, Status]
             - [BUG-1, Open]
+  presentations:
+    - id: slides_launch
+      user_email: testuser@example.com
+      title: Launch Review
+      slides:
+        - id: slide_title
+          layout: TITLE
+          elements:
+            - id: title_box
+              type: shape
+              placeholder_type: TITLE
+              text: Launch Review
 ```
 
 ## Links

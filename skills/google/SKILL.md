@@ -1,12 +1,12 @@
 ---
 name: google
-description: Emulated Google OAuth 2.0, OpenID Connect, Gmail, Calendar, Drive, Docs, and Sheets for local development and testing. Use when the user needs to test Google sign-in locally, emulate OIDC discovery, handle Google token exchange, configure Google OAuth clients, work with Gmail messages/drafts/threads/labels, manage Calendar events, upload or list Drive files, edit documents, read or write spreadsheet values, or work with Google userinfo without hitting real Google APIs.
+description: Emulated Google OAuth 2.0, OpenID Connect, Gmail, Calendar, Drive, Docs, Sheets, and Slides for local development and testing. Use when the user needs to test Google sign-in locally, emulate OIDC discovery, handle Google token exchange, configure Google OAuth clients, work with Gmail messages, manage Calendar events, upload Drive files, edit documents, read or write spreadsheet values, create or update presentations, or work with Google userinfo without hitting real Google APIs.
 allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 ---
 
-# Google OAuth 2.0 / OIDC + Gmail, Calendar, Drive, Docs & Sheets Emulator
+# Google OAuth 2.0 / OIDC + Gmail, Calendar, Drive, Docs, Sheets & Slides Emulator
 
-OAuth 2.0 and OpenID Connect emulation with authorization code flow, PKCE support, ID tokens, OIDC discovery, refresh tokens, plus Gmail, Google Calendar, Drive, Docs, and Sheets REST API surfaces.
+OAuth 2.0 and OpenID Connect emulation with authorization code flow, PKCE support, ID tokens, OIDC discovery, refresh tokens, plus Gmail, Google Calendar, Drive, Docs, Sheets, and Slides REST API surfaces.
 
 ## Start
 
@@ -49,6 +49,7 @@ GOOGLE_EMULATOR_URL=http://localhost:4002
 | `https://www.googleapis.com/drive/v3/...` | `$GOOGLE_EMULATOR_URL/drive/v3/...` |
 | `https://docs.googleapis.com/v1/...` | `$GOOGLE_EMULATOR_URL/v1/...` |
 | `https://sheets.googleapis.com/v4/...` | `$GOOGLE_EMULATOR_URL/v4/...` |
+| `https://slides.googleapis.com/v1/...` | `$GOOGLE_EMULATOR_URL/v1/...` |
 
 ### google-auth-library (Node.js)
 
@@ -213,6 +214,18 @@ google:
           values:
             - [ID, Status]
             - [BUG-1, Open]
+  presentations:
+    - id: slides_launch
+      user_email: testuser@gmail.com
+      title: Launch Review
+      slides:
+        - id: slide_title
+          layout: TITLE
+          elements:
+            - id: title_box
+              type: shape
+              placeholder_type: TITLE
+              text: Launch Review
 ```
 
 When no OAuth clients are configured, the emulator accepts any `client_id`. With clients configured, strict validation is enforced for `client_id`, `client_secret`, and `redirect_uri`.
@@ -623,6 +636,10 @@ Use `POST /v1/documents` to create a document, `GET /v1/documents/:documentId` t
 ## Google Sheets API
 
 Use `POST /v4/spreadsheets` and `GET /v4/spreadsheets/:spreadsheetId` for spreadsheet metadata. A1 ranges support value reads, writes, appends, clears, and batch reads. `POST /v4/spreadsheets/:spreadsheetId:batchUpdate` supports adding, deleting, renaming, and accepting common formatting requests.
+
+## Google Slides API
+
+Use `POST /v1/presentations` to create a presentation and `GET /v1/presentations/:presentationId` to read its slides and page elements. `GET /v1/presentations/:presentationId/pages/:pageObjectId/thumbnail` returns a deterministic local thumbnail. `POST /v1/presentations/:presentationId:batchUpdate` supports creating and deleting slides, adding shapes and images, and editing or styling slide text.
 
 ## Common Patterns
 

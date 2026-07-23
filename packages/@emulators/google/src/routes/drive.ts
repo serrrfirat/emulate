@@ -17,6 +17,7 @@ import {
 import { getDocumentById } from "../document-helpers.js";
 import type { GoogleDriveItem } from "../entities.js";
 import { googleApiError } from "../helpers.js";
+import { getPresentationById } from "../presentation-helpers.js";
 import {
   getRecord,
   getString,
@@ -185,6 +186,8 @@ export function driveRoutes({ app, store }: RouteContext): void {
     if (document) gs.documents.delete(document.id);
     const spreadsheet = getSpreadsheetById(gs, authEmail, item.google_id);
     if (spreadsheet) gs.spreadsheets.delete(spreadsheet.id);
+    const presentation = getPresentationById(gs, authEmail, item.google_id);
+    if (presentation) gs.presentations.delete(presentation.id);
     gs.driveItems.delete(item.id);
     return c.body(null, 204);
   });

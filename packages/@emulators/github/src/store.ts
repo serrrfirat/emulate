@@ -18,6 +18,7 @@ import type {
   GitHubBranchProtection,
   GitHubRef,
   GitHubCommit,
+  GitHubCommitStatus,
   GitHubTree,
   GitHubBlob,
   GitHubTag,
@@ -35,6 +36,7 @@ import type {
   GitHubApp,
   GitHubAppInstallation,
   GitHubOAuthGrant,
+  GitHubReviewThreadResolution,
 } from "./entities.js";
 
 export interface GitHubStore {
@@ -56,6 +58,7 @@ export interface GitHubStore {
   branchProtections: Collection<GitHubBranchProtection>;
   refs: Collection<GitHubRef>;
   commits: Collection<GitHubCommit>;
+  commitStatuses: Collection<GitHubCommitStatus>;
   trees: Collection<GitHubTree>;
   blobs: Collection<GitHubBlob>;
   tags: Collection<GitHubTag>;
@@ -73,6 +76,7 @@ export interface GitHubStore {
   apps: Collection<GitHubApp>;
   appInstallations: Collection<GitHubAppInstallation>;
   oauthGrants: Collection<GitHubOAuthGrant>;
+  reviewThreadResolutions: Collection<GitHubReviewThreadResolution>;
 }
 
 export function getGitHubStore(store: Store): GitHubStore {
@@ -95,6 +99,7 @@ export function getGitHubStore(store: Store): GitHubStore {
     branchProtections: store.collection<GitHubBranchProtection>("github.branch_protections", ["repo_id"]),
     refs: store.collection<GitHubRef>("github.refs", ["repo_id"]),
     commits: store.collection<GitHubCommit>("github.commits", ["repo_id", "sha"]),
+    commitStatuses: store.collection<GitHubCommitStatus>("github.commit_statuses", ["repo_id", "sha", "context"]),
     trees: store.collection<GitHubTree>("github.trees", ["repo_id", "sha"]),
     blobs: store.collection<GitHubBlob>("github.blobs", ["repo_id", "sha"]),
     tags: store.collection<GitHubTag>("github.tags", ["repo_id"]),
@@ -115,5 +120,8 @@ export function getGitHubStore(store: Store): GitHubStore {
       "installation_id",
     ]),
     oauthGrants: store.collection<GitHubOAuthGrant>("github.oauth_grants", ["user_id", "client_id"]),
+    reviewThreadResolutions: store.collection<GitHubReviewThreadResolution>("github.review_thread_resolutions", [
+      "root_comment_id",
+    ]),
   };
 }

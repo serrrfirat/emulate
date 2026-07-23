@@ -290,6 +290,16 @@ export interface GitHubCommit extends Entity {
   user_id: number | null;
 }
 
+export interface GitHubCommitStatus extends Entity {
+  repo_id: number;
+  sha: string;
+  state: "error" | "failure" | "pending" | "success";
+  target_url: string | null;
+  description: string | null;
+  context: string;
+  creator_id: number;
+}
+
 export interface GitHubTree extends Entity {
   repo_id: number;
   sha: string;
@@ -394,6 +404,7 @@ export interface GitHubWorkflowRun extends Entity {
   actor_id: number;
   run_attempt: number;
   run_started_at: string;
+  logs: string | null;
 }
 
 export interface GitHubJob extends Entity {
@@ -407,6 +418,7 @@ export interface GitHubJob extends Entity {
   completed_at: string | null;
   runner_id: number | null;
   runner_name: string | null;
+  logs: string | null;
   steps: Array<{
     name: string;
     status: string;
@@ -415,6 +427,11 @@ export interface GitHubJob extends Entity {
     started_at: string | null;
     completed_at: string | null;
   }>;
+}
+
+export interface GitHubReviewThreadResolution extends Entity {
+  root_comment_id: number;
+  resolved_by_id: number;
 }
 
 export interface GitHubArtifact extends Entity {

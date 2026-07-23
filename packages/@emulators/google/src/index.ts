@@ -11,6 +11,7 @@ import {
 import { createCalendarEventRecord, createCalendarRecord } from "./calendar-helpers.js";
 import { createDriveItemRecord, createDrivePermissionRecord, getDriveItemById } from "./drive-helpers.js";
 import { createDocumentRecord } from "./document-helpers.js";
+import { createPresentationRecord } from "./presentation-helpers.js";
 import { createSpreadsheetRecord } from "./spreadsheet-helpers.js";
 import { calendarRoutes } from "./routes/calendar.js";
 import { draftRoutes } from "./routes/drafts.js";
@@ -20,6 +21,7 @@ import { historyRoutes } from "./routes/history.js";
 import { labelRoutes } from "./routes/labels.js";
 import { messageRoutes } from "./routes/messages.js";
 import { oauthRoutes } from "./routes/oauth.js";
+import { presentationRoutes } from "./routes/presentations.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { spreadsheetRoutes } from "./routes/spreadsheets.js";
 import { threadRoutes } from "./routes/threads.js";
@@ -166,6 +168,24 @@ export interface GoogleSeedSpreadsheet {
   }>;
 }
 
+export interface GoogleSeedPresentation {
+  id?: string;
+  user_email?: string;
+  title: string;
+  slides?: Array<{
+    id?: string;
+    layout?: string;
+    elements?: Array<{
+      id?: string;
+      type?: "shape" | "image";
+      shape_type?: string;
+      placeholder_type?: string;
+      text?: string;
+      image_url?: string;
+    }>;
+  }>;
+}
+
 export interface GoogleSeedConfig {
   port?: number;
   users?: GoogleSeedUser[];
@@ -184,6 +204,7 @@ export interface GoogleSeedConfig {
   shared_drives?: GoogleSeedSharedDrive[];
   documents?: GoogleSeedDocument[];
   spreadsheets?: GoogleSeedSpreadsheet[];
+  presentations?: GoogleSeedPresentation[];
 }
 
 function seedDefaults(store: Store, _baseUrl: string): void {
@@ -423,6 +444,10 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: GoogleSee
     seedSpreadsheets(store, config.spreadsheets, fallbackEmail);
   }
 
+  if (config.presentations) {
+    seedPresentations(store, config.presentations, fallbackEmail);
+  }
+
   if (config.drive_permissions) {
     seedDrivePermissions(store, config.drive_permissions, fallbackEmail);
   }
@@ -645,6 +670,19 @@ function seedSpreadsheets(store: Store, spreadsheets: GoogleSeedSpreadsheet[], f
   }
 }
 
+function seedPresentations(store: Store, presentations: GoogleSeedPresentation[], fallbackEmail: string): void {
+  const gs = getGoogleStore(store);
+
+  for (const presentation of presentations) {
+    createPresentationRecord(gs, {
+      google_id: presentation.id,
+      user_email: presentation.user_email ?? fallbackEmail,
+      title: presentation.title,
+      slides: presentation.slides,
+    });
+  }
+}
+
 export const googlePlugin: ServicePlugin = {
   name: "google",
   register(app: Hono<AppEnv>, store: Store, webhooks: WebhookDispatcher, baseUrl: string, tokenMap?: TokenMap): void {
@@ -654,6 +692,7 @@ export const googlePlugin: ServicePlugin = {
     driveRoutes(ctx);
     documentRoutes(ctx);
     spreadsheetRoutes(ctx);
+    presentationRoutes(ctx);
     messageRoutes(ctx);
     draftRoutes(ctx);
     historyRoutes(ctx);
