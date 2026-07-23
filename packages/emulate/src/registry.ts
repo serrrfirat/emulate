@@ -132,9 +132,9 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
   },
 
   google: {
-    label: "Google OAuth 2.0 / OpenID Connect + Gmail, Calendar, and Drive emulator",
+    label: "Google OAuth 2.0 / OpenID Connect + Gmail, Calendar, Drive, Docs, and Sheets emulator",
     endpoints:
-      "OAuth authorize, token exchange, userinfo, OIDC discovery, token revocation, Gmail messages/drafts/threads/labels/history/settings, Calendar lists/events/freebusy, Drive files/uploads",
+      "OAuth authorize, token exchange, userinfo, OIDC discovery, token revocation, Gmail messages/drafts/threads/labels/history/settings, Calendar lists/events/freebusy, Drive files/uploads/permissions/shared drives, Docs documents/batch updates, Sheets metadata/values/batch updates",
     async load() {
       const mod = await import("@emulators/google");
       return { plugin: mod.googlePlugin, seedFromConfig: mod.seedFromConfig };
@@ -199,7 +199,13 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
             calendar_id: "primary",
             summary: "Project Kickoff",
             start_date_time: "2025-01-10T09:00:00.000Z",
+            start_time_zone: "UTC",
             end_date_time: "2025-01-10T09:30:00.000Z",
+            end_time_zone: "UTC",
+            reminders: {
+              use_default: false,
+              overrides: [{ method: "popup", minutes: 10 }],
+            },
           },
         ],
         drive_items: [
@@ -209,6 +215,42 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
             name: "Docs",
             mime_type: "application/vnd.google-apps.folder",
             parent_ids: ["root"],
+            description: "Shared documentation",
+            starred: true,
+            drive_id: "shared_design",
+          },
+        ],
+        shared_drives: [
+          {
+            id: "shared_design",
+            user_email: "testuser@example.com",
+            name: "Design Team",
+          },
+        ],
+        drive_permissions: [
+          {
+            id: "perm_reviewer",
+            user_email: "testuser@example.com",
+            file_id: "drv_docs",
+            role: "reader",
+            type: "user",
+            email_address: "reviewer@example.com",
+          },
+        ],
+        documents: [
+          {
+            id: "doc_runbook",
+            user_email: "testuser@example.com",
+            title: "Incident Runbook",
+            body: "Check the service dashboard first.",
+          },
+        ],
+        spreadsheets: [
+          {
+            id: "sheet_tracker",
+            user_email: "testuser@example.com",
+            title: "Bug Tracker",
+            sheets: [{ id: 1, title: "Bugs", values: [["ID", "Status"]] }],
           },
         ],
       },

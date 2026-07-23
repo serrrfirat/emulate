@@ -23,6 +23,21 @@ function createTestApp() {
     id: 1,
     scopes: ["openid", "email", "profile"],
   });
+  tokenMap.set("consumer-token", {
+    login: "consumer@gmail.com",
+    id: 2,
+    scopes: ["openid", "email", "profile"],
+  });
+  tokenMap.set("reviewer-token", {
+    login: "reviewer@example.com",
+    id: 3,
+    scopes: ["openid", "email", "profile"],
+  });
+  tokenMap.set("workspace-token", {
+    login: "workspaceuser@example.com",
+    id: 4,
+    scopes: ["openid", "email", "profile"],
+  });
 
   const app = new Hono();
   app.onError(createApiErrorHandler());
@@ -34,6 +49,7 @@ function createTestApp() {
     users: [
       { email: "testuser@example.com", name: "Test User" },
       { email: "consumer@gmail.com", name: "Consumer User" },
+      { email: "reviewer@example.com", name: "Reviewer User" },
       { email: "workspaceuser@example.com", name: "Workspace User", hd: "override.io" },
     ],
     oauth_clients: [
@@ -169,6 +185,47 @@ function createTestApp() {
         parent_ids: ["drv_docs"],
         data: "pdf-handbook-data",
       },
+      {
+        id: "drv_shared_plan",
+        user_email: "testuser@example.com",
+        name: "Shared Design Plan.txt",
+        mime_type: "text/plain",
+        parent_ids: ["root"],
+        drive_id: "shared_design",
+        data: "shared-design-plan",
+      },
+      {
+        id: "drv_presentation",
+        user_email: "testuser@example.com",
+        name: "Launch Slides",
+        mime_type: "application/vnd.google-apps.presentation",
+        data: "Launch plan\nRisks\nNext steps",
+      },
+      {
+        id: "drv_drawing",
+        user_email: "testuser@example.com",
+        name: "Architecture Drawing",
+        mime_type: "application/vnd.google-apps.drawing",
+        data: '<svg xmlns="http://www.w3.org/2000/svg"><text>Architecture</text></svg>',
+      },
+      {
+        id: "drv_duplicate",
+        user_email: "testuser@example.com",
+        name: "Private duplicate",
+        mime_type: "text/plain",
+        data: "private",
+      },
+      {
+        id: "drv_duplicate",
+        user_email: "workspaceuser@example.com",
+        name: "Shared duplicate",
+        mime_type: "text/plain",
+        data: "shared",
+      },
+    ],
+    shared_drives: [
+      { id: "shared_design", user_email: "testuser@example.com", name: "Design Team" },
+      { id: "shared_design", user_email: "consumer@gmail.com", name: "Design Team" },
     ],
     documents: [
       {
@@ -193,6 +250,24 @@ function createTestApp() {
             ],
           },
         ],
+      },
+    ],
+    drive_permissions: [
+      {
+        id: "perm_seeded_doc",
+        user_email: "testuser@example.com",
+        file_id: "doc_runbook",
+        role: "reader",
+        type: "user",
+        email_address: "reviewer@example.com",
+      },
+      {
+        id: "perm_duplicate",
+        user_email: "workspaceuser@example.com",
+        file_id: "drv_duplicate",
+        role: "reader",
+        type: "user",
+        email_address: "reviewer@example.com",
       },
     ],
   });
@@ -958,7 +1033,7 @@ describe("Google plugin integration", () => {
     expect(((await userinfoRes.json()) as { hd?: string }).hd).toBe("override.io");
   });
 
-  it("lists calendar resources, creates events, queries freebusy, and deletes events", async () => {
+  it("lists, reads, updates, creates, queries, and deletes calendar events", async () => {
     const calendarListRes = await app.request(`${base}/calendar/v3/users/me/calendarList`, {
       headers: authHeaders(),
     });
@@ -990,8 +1065,8 @@ describe("Google plugin integration", () => {
       body: {
         summary: "Focus Time",
         description: "Block time for implementation.",
-        start: { dateTime: "2025-01-10T12:00:00.000Z" },
-        end: { dateTime: "2025-01-10T13:00:00.000Z" },
+        start: { dateTime: "2025-01-10T12:00:00.000Z", timeZone: "Europe/Istanbul" },
+        end: { dateTime: "2025-01-10T13:00:00.000Z", timeZone: "Europe/Istanbul" },
         attendees: [{ email: "teammate@example.com", displayName: "Teammate" }],
         conferenceData: {
           entryPoints: [{ entryPointType: "video", uri: "https://meet.google.com/focus-time" }],
@@ -1001,6 +1076,62 @@ describe("Google plugin integration", () => {
     expect(createEventRes.status).toBe(200);
     const createdEvent = (await createEventRes.json()) as { id: string; summary: string };
     expect(createdEvent.summary).toBe("Focus Time");
+
+    const getEventRes = await app.request(`${base}/calendar/v3/calendars/primary/events/${createdEvent.id}`, {
+      headers: authHeaders(),
+    });
+    expect(getEventRes.status).toBe(200);
+    const fetchedEvent = (await getEventRes.json()) as { etag: string };
+    expect(fetchedEvent).toMatchObject({
+      id: createdEvent.id,
+      summary: "Focus Time",
+      attendees: [{ email: "teammate@example.com" }],
+      start: { dateTime: "2025-01-10T12:00:00.000Z", timeZone: "Europe/Istanbul" },
+      end: { dateTime: "2025-01-10T13:00:00.000Z", timeZone: "Europe/Istanbul" },
+    });
+
+    const updateEventRes = await jsonRequest(app, `/calendar/v3/calendars/primary/events/${createdEvent.id}`, {
+      method: "PATCH",
+      headers: { "If-Match": fetchedEvent.etag },
+      body: {
+        summary: "Deep Focus",
+        transparency: "opaque",
+        attendees: [
+          { email: "teammate@example.com", displayName: "Teammate" },
+          { email: "reviewer@example.com", responseStatus: "needsAction" },
+        ],
+        reminders: {
+          useDefault: false,
+          overrides: [
+            { method: "email", minutes: 30 },
+            { method: "popup", minutes: 10 },
+          ],
+        },
+      },
+    });
+    expect(updateEventRes.status).toBe(200);
+    expect(await updateEventRes.json()).toMatchObject({
+      id: createdEvent.id,
+      summary: "Deep Focus",
+      transparency: "opaque",
+      attendees: [
+        { email: "teammate@example.com", displayName: "Teammate" },
+        { email: "reviewer@example.com", responseStatus: "needsAction" },
+      ],
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: "email", minutes: 30 },
+          { method: "popup", minutes: 10 },
+        ],
+      },
+    });
+    const staleUpdateRes = await jsonRequest(app, `/calendar/v3/calendars/primary/events/${createdEvent.id}`, {
+      method: "PATCH",
+      headers: { "If-Match": fetchedEvent.etag },
+      body: { summary: "Stale update" },
+    });
+    expect(staleUpdateRes.status).toBe(412);
 
     const freeBusyRes = await jsonRequest(app, "/calendar/v3/freeBusy", {
       method: "POST",
@@ -1034,9 +1165,14 @@ describe("Google plugin integration", () => {
     expect(afterDeleteRes.status).toBe(200);
     const afterDelete = (await afterDeleteRes.json()) as { items: Array<{ id: string }> };
     expect(afterDelete.items).toEqual([]);
+
+    const missingEventRes = await app.request(`${base}/calendar/v3/calendars/primary/events/missing`, {
+      headers: authHeaders(),
+    });
+    expect(missingEventRes.status).toBe(404);
   });
 
-  it("lists drive files, uploads media, downloads content, and moves files", async () => {
+  it("covers Drive file lifecycle, sharing, and shared drives", async () => {
     const listRootFoldersRes = await app.request(
       `${base}/drive/v3/files?q=${encodeURIComponent("'root' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false")}`,
       { headers: authHeaders() },
@@ -1066,6 +1202,26 @@ describe("Google plugin integration", () => {
     expect(mediaRes.status).toBe(200);
     expect(Buffer.from(await mediaRes.arrayBuffer()).toString("utf8")).toBe("pdf-handbook-data");
 
+    const presentationExportRes = await app.request(
+      `${base}/drive/v3/files/drv_presentation/export?mimeType=${encodeURIComponent("text/plain")}`,
+      { headers: authHeaders() },
+    );
+    expect(presentationExportRes.status).toBe(200);
+    expect(await presentationExportRes.text()).toBe("Launch plan\nRisks\nNext steps");
+
+    const drawingExportRes = await app.request(
+      `${base}/drive/v3/files/drv_drawing/export?mimeType=${encodeURIComponent("image/svg+xml")}`,
+      { headers: authHeaders() },
+    );
+    expect(drawingExportRes.status).toBe(200);
+    expect(await drawingExportRes.text()).toContain("<text>Architecture</text>");
+
+    const unsupportedExportRes = await app.request(
+      `${base}/drive/v3/files/drv_presentation/export?mimeType=${encodeURIComponent("application/pdf")}`,
+      { headers: authHeaders() },
+    );
+    expect(unsupportedExportRes.status).toBe(400);
+
     const createFolderRes = await jsonRequest(app, "/drive/v3/files", {
       method: "POST",
       body: {
@@ -1084,6 +1240,7 @@ describe("Google plugin integration", () => {
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({
         name: "Quarterly Report.pdf",
         parents: ["root"],
+        description: "Quarterly provider contract",
       })}\r\n`,
       `--${boundary}\r\nContent-Type: application/pdf\r\n\r\n${uploadedContent}\r\n`,
       `--${boundary}--\r\n`,
@@ -1097,20 +1254,23 @@ describe("Google plugin integration", () => {
       body: multipartBody,
     });
     expect(uploadRes.status).toBe(200);
-    const uploaded = (await uploadRes.json()) as { id: string; parents: string[] };
+    const uploaded = (await uploadRes.json()) as { id: string; parents: string[]; description?: string };
     expect(uploaded.parents).toEqual(["root"]);
+    expect(uploaded.description).toBe("Quarterly provider contract");
 
     const moveRes = await jsonRequest(
       app,
       `/drive/v3/files/${uploaded.id}?addParents=${folder.id}&removeParents=root&fields=id,parents`,
       {
         method: "PATCH",
-        body: {},
+        body: { description: "Reviewed report", starred: true },
       },
     );
     expect(moveRes.status).toBe(200);
-    const moved = (await moveRes.json()) as { parents: string[] };
+    const moved = (await moveRes.json()) as { parents: string[]; description?: string; starred: boolean };
     expect(moved.parents).toEqual([folder.id]);
+    expect(moved.description).toBe("Reviewed report");
+    expect(moved.starred).toBe(true);
 
     const movedListRes = await app.request(
       `${base}/drive/v3/files?q=${encodeURIComponent(`'${folder.id}' in parents and (mimeType = 'application/pdf') and trashed = false`)}`,
@@ -1125,6 +1285,121 @@ describe("Google plugin integration", () => {
     });
     expect(uploadedMediaRes.status).toBe(200);
     expect(Buffer.from(await uploadedMediaRes.arrayBuffer()).toString("utf8")).toBe(uploadedContent);
+
+    const shareRes = await jsonRequest(app, `/drive/v3/files/${uploaded.id}/permissions`, {
+      method: "POST",
+      body: { type: "user", role: "reader", emailAddress: "consumer@gmail.com" },
+    });
+    expect(shareRes.status).toBe(200);
+    const permission = (await shareRes.json()) as { id: string };
+    expect(permission).toMatchObject({
+      role: "reader",
+      type: "user",
+      emailAddress: "consumer@gmail.com",
+    });
+    const invalidShareRes = await jsonRequest(app, `/drive/v3/files/${uploaded.id}/permissions`, {
+      method: "POST",
+      body: { type: "user", role: "owner", emailAddress: "other@example.com" },
+    });
+    expect(invalidShareRes.status).toBe(400);
+
+    const permissionsRes = await app.request(`${base}/drive/v3/files/${uploaded.id}/permissions`, {
+      headers: authHeaders(),
+    });
+    expect(await permissionsRes.json()).toMatchObject({
+      permissions: [{ id: permission.id, role: "reader", emailAddress: "consumer@gmail.com" }],
+    });
+
+    const sharedWithMeRes = await app.request(`${base}/drive/v3/files?q=${encodeURIComponent("sharedWithMe = true")}`, {
+      headers: { Authorization: "Bearer consumer-token" },
+    });
+    expect(await sharedWithMeRes.json()).toMatchObject({ files: [{ id: uploaded.id, shared: true }] });
+
+    const sharedReadRes = await app.request(`${base}/drive/v3/files/${uploaded.id}`, {
+      headers: { Authorization: "Bearer consumer-token" },
+    });
+    expect(await sharedReadRes.json()).toMatchObject({ id: uploaded.id, shared: true, ownedByMe: false });
+    const forbiddenUpdateRes = await app.request(`${base}/drive/v3/files/${uploaded.id}`, {
+      method: "PATCH",
+      headers: { Authorization: "Bearer consumer-token", "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Not allowed" }),
+    });
+    expect(forbiddenUpdateRes.status).toBe(403);
+
+    const removePermissionRes = await app.request(
+      `${base}/drive/v3/files/${uploaded.id}/permissions/${permission.id}`,
+      { method: "DELETE", headers: authHeaders() },
+    );
+    expect(removePermissionRes.status).toBe(204);
+
+    const sharedDrivesRes = await app.request(`${base}/drive/v3/drives?pageSize=10`, {
+      headers: authHeaders(),
+    });
+    expect(await sharedDrivesRes.json()).toMatchObject({
+      drives: [{ id: "shared_design", name: "Design Team" }],
+    });
+    const sharedDriveFilesRes = await app.request(`${base}/drive/v3/files?corpora=drive&driveId=shared_design`, {
+      headers: authHeaders(),
+    });
+    expect(await sharedDriveFilesRes.json()).toMatchObject({
+      files: [{ id: "drv_shared_plan", driveId: "shared_design" }],
+    });
+    const memberSharedDriveFilesRes = await app.request(`${base}/drive/v3/files?corpora=drive&driveId=shared_design`, {
+      headers: { Authorization: "Bearer consumer-token" },
+    });
+    expect(await memberSharedDriveFilesRes.json()).toMatchObject({
+      files: [{ id: "drv_shared_plan", driveId: "shared_design", ownedByMe: false }],
+    });
+    const memberUpdateRes = await app.request(`${base}/drive/v3/files/drv_shared_plan`, {
+      method: "PATCH",
+      headers: { Authorization: "Bearer consumer-token", "Content-Type": "application/json" },
+      body: JSON.stringify({ starred: true }),
+    });
+    expect(memberUpdateRes.status).toBe(200);
+
+    const seededDocumentShareRes = await app.request(`${base}/drive/v3/files/doc_runbook`, {
+      headers: { Authorization: "Bearer reviewer-token" },
+    });
+    expect(seededDocumentShareRes.status).toBe(200);
+    expect(await seededDocumentShareRes.json()).toMatchObject({ id: "doc_runbook", name: "Incident Runbook" });
+
+    const duplicateSharedRes = await app.request(`${base}/drive/v3/files/drv_duplicate`, {
+      headers: { Authorization: "Bearer reviewer-token" },
+    });
+    const duplicatePermissionsRes = await app.request(`${base}/drive/v3/files/drv_duplicate/permissions`, {
+      headers: { Authorization: "Bearer workspace-token" },
+    });
+    const duplicateSharedBody = await duplicateSharedRes.json();
+    expect({
+      status: duplicateSharedRes.status,
+      body: duplicateSharedBody,
+      permissions: await duplicatePermissionsRes.json(),
+    }).toMatchObject({
+      status: 200,
+      body: { id: "drv_duplicate", name: "Shared duplicate" },
+      permissions: { permissions: [{ emailAddress: "reviewer@example.com" }] },
+    });
+
+    const trashRes = await jsonRequest(app, `/drive/v3/files/${uploaded.id}`, {
+      method: "PATCH",
+      body: { trashed: true },
+    });
+    expect(await trashRes.json()).toMatchObject({ id: uploaded.id, trashed: true });
+    const untrashedListRes = await app.request(`${base}/drive/v3/files?q=${encodeURIComponent("trashed = false")}`, {
+      headers: authHeaders(),
+    });
+    const untrashed = (await untrashedListRes.json()) as { files: Array<{ id: string }> };
+    expect(untrashed.files.map((file) => file.id)).not.toContain(uploaded.id);
+
+    const deleteRes = await app.request(`${base}/drive/v3/files/${uploaded.id}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    expect(deleteRes.status).toBe(204);
+    const deletedRes = await app.request(`${base}/drive/v3/files/${uploaded.id}`, {
+      headers: authHeaders(),
+    });
+    expect(deletedRes.status).toBe(404);
   });
 
   it("creates, edits, and reads Google Docs while exposing them through Drive", async () => {
@@ -1168,6 +1443,13 @@ describe("Google plugin integration", () => {
       body: { content: Array<{ paragraph: { elements: Array<{ textRun: { content: string } }> } }> };
     };
     expect(document.body.content[0].paragraph.elements[0].textRun.content).toBe("Ship on Monday.\n");
+
+    const exportRes = await app.request(
+      `${base}/drive/v3/files/${created.documentId}/export?mimeType=${encodeURIComponent("text/plain")}`,
+      { headers: authHeaders() },
+    );
+    expect(exportRes.status).toBe(200);
+    expect(await exportRes.text()).toBe("Ship on Monday.\n");
 
     const driveRes = await app.request(
       `${base}/drive/v3/files?q=${encodeURIComponent(`name = 'Launch Plan' and mimeType = 'application/vnd.google-apps.document' and trashed = false`)}`,
@@ -1253,6 +1535,13 @@ describe("Google plugin integration", () => {
   });
 
   it("reads seeded Sheets and supports value writes, appends, and sheet renames", async () => {
+    const exportRes = await app.request(
+      `${base}/drive/v3/files/sheet_tracker/export?mimeType=${encodeURIComponent("text/csv")}`,
+      { headers: authHeaders() },
+    );
+    expect(exportRes.status).toBe(200);
+    expect(await exportRes.text()).toBe("ID,Status\nBUG-1,Open");
+
     const seededRes = await app.request(`${base}/v4/spreadsheets/sheet_tracker/values/Bugs!A1:B2`, {
       headers: authHeaders(),
     });

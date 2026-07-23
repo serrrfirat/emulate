@@ -138,6 +138,7 @@ export function parseCalendarEventInputFromBody(
   const start = getRecord(body, "start");
   const end = getRecord(body, "end");
   const conferenceData = getRecord(body, "conferenceData");
+  const reminders = getRecord(body, "reminders");
   const conferenceEntryPoints = getRecordArray(conferenceData ?? {}, "entryPoints")
     .map((entry) => ({
       entry_point_type: getString(entry, "entryPointType") ?? "video",
@@ -153,8 +154,10 @@ export function parseCalendarEventInputFromBody(
     location: getString(body, "location") ?? null,
     start_date_time: getString(start ?? {}, "dateTime") ?? null,
     start_date: getString(start ?? {}, "date") ?? null,
+    start_time_zone: getString(start ?? {}, "timeZone") ?? null,
     end_date_time: getString(end ?? {}, "dateTime") ?? null,
     end_date: getString(end ?? {}, "date") ?? null,
+    end_time_zone: getString(end ?? {}, "timeZone") ?? null,
     attendees: getRecordArray(body, "attendees")
       .map((entry) => ({
         email: getString(entry, "email") ?? "",
@@ -170,6 +173,17 @@ export function parseCalendarEventInputFromBody(
       conferenceEntryPoints.find((entry) => entry.entry_point_type === "video")?.uri ??
       null,
     transparency: getString(body, "transparency") ?? null,
+    reminders: reminders
+      ? {
+          use_default: reminders.useDefault === true,
+          overrides: getRecordArray(reminders, "overrides")
+            .map((entry) => ({
+              method: getString(entry, "method") ?? "",
+              minutes: getFiniteNumber(entry, "minutes") ?? -1,
+            }))
+            .filter((entry) => entry.method.length > 0 && Number.isSafeInteger(entry.minutes) && entry.minutes >= 0),
+        }
+      : null,
   };
 }
 

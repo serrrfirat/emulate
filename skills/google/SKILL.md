@@ -156,7 +156,14 @@ google:
       calendar_id: primary
       summary: Project Kickoff
       start_date_time: "2025-01-10T09:00:00.000Z"
+      start_time_zone: UTC
       end_date_time: "2025-01-10T09:30:00.000Z"
+      end_time_zone: UTC
+      reminders:
+        use_default: false
+        overrides:
+          - method: popup
+            minutes: 10
       attendees:
         - email: testuser@gmail.com
           display_name: Test User
@@ -171,12 +178,26 @@ google:
       name: Docs
       mime_type: application/vnd.google-apps.folder
       parent_ids: [root]
+      description: Shared documentation
+      starred: true
+      drive_id: shared_design
     - id: drv_readme
       user_email: testuser@gmail.com
       name: README.md
       mime_type: text/markdown
       parent_ids: [drv_docs]
       data: "# Hello World"
+  shared_drives:
+    - id: shared_design
+      user_email: testuser@gmail.com
+      name: Design Team
+  drive_permissions:
+    - id: perm_reviewer
+      user_email: testuser@gmail.com
+      file_id: drv_readme
+      role: reader
+      type: user
+      email_address: reviewer@example.com
   documents:
     - id: doc_runbook
       user_email: testuser@gmail.com
@@ -507,6 +528,15 @@ curl -X POST http://localhost:4002/calendar/v3/calendars/primary/events \
   -H "Content-Type: application/json" \
   -d '{"summary": "Team Meeting", "start": {"dateTime": "2025-01-10T14:00:00Z"}, "end": {"dateTime": "2025-01-10T15:00:00Z"}, "attendees": [{"email": "dev@example.com"}]}'
 
+# Read or update an event
+curl http://localhost:4002/calendar/v3/calendars/primary/events/evt_kickoff \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -X PATCH http://localhost:4002/calendar/v3/calendars/primary/events/evt_kickoff \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"attendees": [{"email": "reviewer@example.com"}], "reminders": {"useDefault": false, "overrides": [{"method": "popup", "minutes": 10}]}}'
+
 # Delete event
 curl -X DELETE http://localhost:4002/calendar/v3/calendars/primary/events/evt_kickoff \
   -H "Authorization: Bearer $TOKEN"
@@ -530,6 +560,9 @@ curl -X POST http://localhost:4002/calendar/v3/freeBusy \
 curl "http://localhost:4002/drive/v3/files?q='root'+in+parents&pageSize=20" \
   -H "Authorization: Bearer $TOKEN"
 
+# Supported collaboration filters include q=starred = true,
+# q=sharedWithMe = true, and corpora=drive&driveId=...
+
 # Create file (JSON metadata)
 curl -X POST http://localhost:4002/drive/v3/files \
   -H "Authorization: Bearer $TOKEN" \
@@ -550,12 +583,38 @@ curl http://localhost:4002/drive/v3/files/drv_readme \
 curl "http://localhost:4002/drive/v3/files/drv_readme?alt=media" \
   -H "Authorization: Bearer $TOKEN"
 
-# Update file (PATCH or PUT; move parents with query params)
+# Export a Docs document body
+curl "http://localhost:4002/drive/v3/files/doc_runbook/export?mimeType=text/plain" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Export the first tab of a Sheets file
+curl "http://localhost:4002/drive/v3/files/sheet_tracker/export?mimeType=text/csv" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Seeded Slides and Drawings export from their data field as text/plain
+# and image/svg+xml, respectively.
+
+# Partially update a file (PATCH or PUT; move parents with query params)
 curl -X PATCH "http://localhost:4002/drive/v3/files/drv_readme?addParents=folder_id&removeParents=root" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "README-updated.md"}'
+
+# Share and inspect permissions
+curl -X POST http://localhost:4002/drive/v3/files/drv_readme/permissions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "user", "role": "reader", "emailAddress": "reviewer@example.com"}'
+
+curl http://localhost:4002/drive/v3/files/drv_readme/permissions \
+  -H "Authorization: Bearer $TOKEN"
+
+# List shared drives
+curl http://localhost:4002/drive/v3/drives \
+  -H "Authorization: Bearer $TOKEN"
 ```
+
+Permission creation supports `type: "user"` with a required email address and a `reader`, `commenter`, `writer`, or `organizer` role. Explicit permissions grant reads, while writer and organizer roles also grant metadata updates. Shared-drive membership grants read and metadata-update access to files in that drive. Only the file owner can permanently delete the file or manage its permissions.
 
 ## Google Docs API
 

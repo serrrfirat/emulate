@@ -64,17 +64,27 @@ OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local
 - `GET /calendar/v3/users/:userId/calendarList` - list calendars
 - `GET /calendar/v3/calendars/:calendarId/events` - list events
 - `POST /calendar/v3/calendars/:calendarId/events` - create event
+- `GET /calendar/v3/calendars/:calendarId/events/:eventId` - get event
+- `PATCH /calendar/v3/calendars/:calendarId/events/:eventId` - update event, attendees, or reminders
 - `DELETE /calendar/v3/calendars/:calendarId/events/:eventId` - delete event
 - `POST /calendar/v3/freeBusy` - query free/busy
 
 ## Drive
 
-- `GET /drive/v3/files` - list files
+- `GET /drive/v3/files` - list files; supports parent/name/MIME/trash filters plus `starred = true`, `sharedWithMe = true`, and `corpora=drive&driveId=...`
 - `GET /drive/v3/files/:fileId` - get file metadata
+- `GET /drive/v3/files/:fileId/export` - export Docs as `text/plain`, the first Sheets tab as `text/csv`, Slides as `text/plain`, or Drawings as `image/svg+xml`
 - `POST /drive/v3/files` - create file metadata
-- `PATCH /drive/v3/files/:fileId` - update file metadata
-- `PUT /drive/v3/files/:fileId` - update file content
+- `PATCH /drive/v3/files/:fileId` - partially update file metadata
+- `PUT /drive/v3/files/:fileId` - partially update file metadata
+- `DELETE /drive/v3/files/:fileId` - permanently delete a file
 - `POST /upload/drive/v3/files` - upload file
+- `POST /drive/v3/files/:fileId/permissions` - share a file with a user as reader, commenter, writer, or organizer
+- `GET /drive/v3/files/:fileId/permissions` - list file permissions
+- `DELETE /drive/v3/files/:fileId/permissions/:permissionId` - remove file access
+- `GET /drive/v3/drives` - list shared drives
+
+Explicit user permissions grant read access. Writer and organizer permissions also grant metadata updates. Shared-drive membership grants read and metadata-update access to files in that drive. Only the file owner can permanently delete a file or manage its permissions.
 
 ## Docs
 

@@ -13,6 +13,7 @@ npm install @emulators/google
 ## Endpoints
 
 ### OAuth & OIDC
+
 - `GET /o/oauth2/v2/auth` — authorization endpoint
 - `POST /oauth2/token` — token exchange
 - `GET /oauth2/v2/userinfo` — get user info
@@ -20,6 +21,7 @@ npm install @emulators/google
 - `GET /oauth2/v3/certs` — JSON Web Key Set (JWKS)
 
 ### Gmail
+
 - `GET /gmail/v1/users/:userId/messages` — list messages with `q`, `labelIds`, `maxResults`, and `pageToken`
 - `GET /gmail/v1/users/:userId/messages/:id` — fetch message in `full`, `metadata`, `minimal`, or `raw` formats
 - `GET /gmail/v1/users/:userId/messages/:messageId/attachments/:id` — fetch attachment bodies
@@ -32,6 +34,7 @@ npm install @emulators/google
 - `POST /gmail/v1/users/:userId/messages/:id/untrash` — untrash message
 
 ### Drafts
+
 - `GET /gmail/v1/users/:userId/drafts` — list drafts
 - `POST /gmail/v1/users/:userId/drafts` — create draft
 - `GET /gmail/v1/users/:userId/drafts/:id` — get draft
@@ -40,17 +43,20 @@ npm install @emulators/google
 - `DELETE /gmail/v1/users/:userId/drafts/:id` — delete draft
 
 ### Threads
+
 - `GET /gmail/v1/users/:userId/threads` — list threads
 - `GET /gmail/v1/users/:userId/threads/:id` — get thread
 - `POST /gmail/v1/users/:userId/threads/:id/modify` — add/remove labels across a thread
 
 ### Labels
+
 - `GET /gmail/v1/users/:userId/labels` — list labels
 - `POST /gmail/v1/users/:userId/labels` — create label
 - `PATCH /gmail/v1/users/:userId/labels/:id` — update label
 - `DELETE /gmail/v1/users/:userId/labels/:id` — delete label
 
 ### History, Watch & Settings
+
 - `GET /gmail/v1/users/:userId/history` — list history
 - `POST /gmail/v1/users/:userId/watch` — set up push notifications
 - `POST /gmail/v1/users/:userId/stop` — stop push notifications
@@ -61,26 +67,40 @@ npm install @emulators/google
 - `GET /gmail/v1/users/:userId/settings/sendAs` — list send-as aliases
 
 ### Calendar
+
 - `GET /calendar/v3/users/:userId/calendarList` — list calendars
 - `GET /calendar/v3/calendars/:calendarId/events` — list events
 - `POST /calendar/v3/calendars/:calendarId/events` — create event
+- `GET /calendar/v3/calendars/:calendarId/events/:eventId` — get event
+- `PATCH /calendar/v3/calendars/:calendarId/events/:eventId` — update event, attendees, or reminders
 - `DELETE /calendar/v3/calendars/:calendarId/events/:eventId` — delete event
 - `POST /calendar/v3/freeBusy` — free/busy query
 
 ### Drive
-- `GET /drive/v3/files` — list files
+
+- `GET /drive/v3/files` — list files; supports parent/name/MIME/trash filters plus `starred = true`, `sharedWithMe = true`, and `corpora=drive&driveId=...`
 - `GET /drive/v3/files/:fileId` — get file metadata
+- `GET /drive/v3/files/:fileId/export` — export Docs as `text/plain`, the first Sheets tab as `text/csv`, Slides as `text/plain`, or Drawings as `image/svg+xml`
 - `POST /drive/v3/files` — create file
-- `PATCH /drive/v3/files/:fileId` — update file metadata
-- `PUT /drive/v3/files/:fileId` — update file content
+- `PATCH /drive/v3/files/:fileId` — partially update file metadata
+- `PUT /drive/v3/files/:fileId` — partially update file metadata
+- `DELETE /drive/v3/files/:fileId` — permanently delete a file
 - `POST /upload/drive/v3/files` — upload file
+- `POST /drive/v3/files/:fileId/permissions` — share a file with a user as reader, commenter, writer, or organizer
+- `GET /drive/v3/files/:fileId/permissions` — list file permissions
+- `DELETE /drive/v3/files/:fileId/permissions/:permissionId` — remove file access
+- `GET /drive/v3/drives` — list shared drives
+
+Explicit user permissions grant read access. Writer and organizer permissions also grant metadata updates. Shared-drive membership grants read and metadata-update access to files in that drive. Only the file owner can permanently delete a file or manage its permissions.
 
 ### Docs
+
 - `POST /v1/documents` — create document
 - `GET /v1/documents/:documentId` — read document structure and text
 - `POST /v1/documents/:documentId:batchUpdate` — insert, delete, replace, and accept common formatting requests
 
 ### Sheets
+
 - `POST /v4/spreadsheets` — create spreadsheet
 - `GET /v4/spreadsheets/:spreadsheetId` — get spreadsheet and sheet metadata
 - `GET /v4/spreadsheets/:spreadsheetId/values/:range` — read A1 values
@@ -130,13 +150,34 @@ google:
       calendar_id: primary
       summary: Project Kickoff
       start_date_time: 2025-01-10T09:00:00.000Z
+      start_time_zone: UTC
       end_date_time: 2025-01-10T09:30:00.000Z
+      end_time_zone: UTC
+      reminders:
+        use_default: false
+        overrides:
+          - method: popup
+            minutes: 10
   drive_items:
     - id: drv_docs
       user_email: testuser@example.com
       name: Docs
       mime_type: application/vnd.google-apps.folder
       parent_ids: [root]
+      description: Shared documentation
+      starred: true
+      drive_id: shared_design
+  shared_drives:
+    - id: shared_design
+      user_email: testuser@example.com
+      name: Design Team
+  drive_permissions:
+    - id: perm_reviewer
+      user_email: testuser@example.com
+      file_id: drv_docs
+      role: reader
+      type: user
+      email_address: reviewer@example.com
   documents:
     - id: doc_runbook
       user_email: testuser@example.com

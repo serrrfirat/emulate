@@ -175,13 +175,34 @@ google:
       calendar_id: primary
       summary: Project Kickoff
       start_date_time: 2025-01-10T09:00:00.000Z
+      start_time_zone: UTC
       end_date_time: 2025-01-10T09:30:00.000Z
+      end_time_zone: UTC
+      reminders:
+        use_default: false
+        overrides:
+          - method: popup
+            minutes: 10
   drive_items:
     - id: drv_docs
       user_email: testuser@example.com
       name: Docs
       mime_type: application/vnd.google-apps.folder
       parent_ids: [root]
+      description: Shared documentation
+      starred: true
+      drive_id: shared_design
+  shared_drives:
+    - id: shared_design
+      user_email: testuser@example.com
+      name: Design Team
+  drive_permissions:
+    - id: perm_reviewer
+      user_email: testuser@example.com
+      file_id: drv_docs
+      role: reader
+      type: user
+      email_address: reviewer@example.com
   documents:
     - id: doc_runbook
       user_email: testuser@example.com
