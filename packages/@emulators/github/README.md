@@ -38,6 +38,11 @@ npm install @emulators/github
 - `POST /repos/:owner/:repo/transfer` — transfer repo
 - `GET /repos/:owner/:repo/tags` — list tags
 
+### Contents
+- `GET /repos/:owner/:repo/contents/:path` — get a file or directory
+- `PUT /repos/:owner/:repo/contents/:path` — create or update file contents
+- `DELETE /repos/:owner/:repo/contents/:path` — delete a file
+
 ### Issues
 - `GET /repos/:owner/:repo/issues` — list (filter by state, labels, assignee, milestone, creator, since)
 - `POST /repos/:owner/:repo/issues` — create
@@ -62,6 +67,7 @@ npm install @emulators/github
 ### Comments
 - Issue comments: full CRUD on `/repos/:owner/:repo/issues/:number/comments`
 - Review comments: full CRUD on `/repos/:owner/:repo/pulls/:number/comments`
+- `POST /repos/:owner/:repo/pulls/:number/comments/:comment_id/replies` — reply to a review comment
 - Commit comments: full CRUD on `/repos/:owner/:repo/commits/:sha/comments`
 - Repo-wide listings for each type
 
@@ -71,6 +77,7 @@ npm install @emulators/github
 - `GET/PUT /repos/:owner/:repo/pulls/:number/reviews/:id` — get/update
 - `POST /repos/:owner/:repo/pulls/:number/reviews/:id/events` — submit
 - `PUT /repos/:owner/:repo/pulls/:number/reviews/:id/dismissals` — dismiss
+- `POST /graphql` — query, resolve, or unresolve review threads
 
 ### Labels & Milestones
 - Labels: full CRUD, add/remove from issues, replace all
@@ -83,6 +90,8 @@ npm install @emulators/github
 - Trees: get (with recursive), create (with inline content)
 - Blobs: get, create
 - Tags: get, create
+- `POST /repos/:owner/:repo/statuses/:sha` — create a commit status
+- `GET /repos/:owner/:repo/commits/:ref/status` — get combined commit status
 
 ### Organizations & Teams
 - Orgs: get, update, list
@@ -110,9 +119,13 @@ npm install @emulators/github
 
 ### Actions
 - Workflows: list, get, enable/disable, dispatch
-- Workflow runs: list, get, cancel, rerun, delete, logs
-- Jobs: list, get, logs
+- Workflow runs: list, get, cancel, rerun all jobs, rerun failed jobs, delete, logs
+- Jobs: list, get, rerun, logs
 - Artifacts: list, get, delete
+- Seed workflows with runs, jobs, logs, and artifacts for deterministic CI tests
+- `POST /repos/:owner/:repo/actions/runs/:run_id/rerun` — rerun all jobs
+- `POST /repos/:owner/:repo/actions/runs/:run_id/rerun-failed-jobs` — rerun failed jobs
+- `POST /repos/:owner/:repo/actions/jobs/:job_id/rerun` — rerun one job
 - Secrets: repo + org CRUD
 
 ### Checks
@@ -148,6 +161,35 @@ github:
       name: hello-world
       language: JavaScript
       auto_init: true
+  workflows:
+    - owner: octocat
+      repo: hello-world
+      id: 101
+      name: CI
+      path: .github/workflows/ci.yml
+  workflow_runs:
+    - owner: octocat
+      repo: hello-world
+      workflow_id: 101
+      id: 1001
+      status: completed
+      conclusion: success
+      logs: Build completed successfully.
+  jobs:
+    - owner: octocat
+      repo: hello-world
+      run_id: 1001
+      id: 2001
+      name: test
+      status: completed
+      conclusion: success
+      logs: All tests passed.
+  artifacts:
+    - owner: octocat
+      repo: hello-world
+      run_id: 1001
+      id: 3001
+      name: test-results
   oauth_apps:
     - client_id: "Iv1.abc123"
       client_secret: "secret_abc123"

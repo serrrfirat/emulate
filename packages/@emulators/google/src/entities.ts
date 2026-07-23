@@ -219,3 +219,29 @@ export interface GoogleSpreadsheet extends Entity {
   user_email: string;
   sheets: GoogleSheet[];
 }
+
+export interface GoogleSlideElement {
+  object_id: string;
+  element_type: "shape" | "image";
+  shape_type: string | null;
+  placeholder_type: string | null;
+  text: string;
+  image_url: string | null;
+  size: Record<string, unknown> | null;
+  transform: Record<string, unknown> | null;
+  text_style: Record<string, unknown>;
+  paragraph_style: Record<string, unknown>;
+}
+
+export interface GoogleSlide {
+  object_id: string;
+  layout_object_id: string;
+  page_elements: GoogleSlideElement[];
+}
+
+export interface GooglePresentation extends Entity {
+  google_id: string;
+  user_email: string;
+  revision_id: string;
+  slides: GoogleSlide[];
+}

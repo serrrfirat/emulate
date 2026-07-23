@@ -17,6 +17,7 @@ import {
   assertAuthenticatedUser,
   assertRepoAdmin,
   assertRepoRead,
+  assertRepoWrite,
   getActorUser,
   notFoundResponse,
   ownerLoginOf,
@@ -127,6 +128,7 @@ function seedStubJobs(gh: GitHubStore, repo: GitHubRepo, run: GitHubWorkflowRun)
     completed_at: run.status === "completed" ? run.updated_at : null,
     runner_id: 1,
     runner_name: "Hosted Agent",
+    logs: null,
     steps: [
       {
         name: "Set up job",
@@ -362,6 +364,7 @@ export function actionsRoutes({ app, store, webhooks, baseUrl }: RouteContext): 
       actor_id: actor.id,
       run_attempt: 1,
       run_started_at: now,
+      logs: null,
     } as Omit<GitHubWorkflowRun, "id" | "created_at" | "updated_at">);
     gh.workflowRuns.update(run.id, { node_id: generateNodeId("WorkflowRun", run.id) });
     const created = gh.workflowRuns.get(run.id)!;
@@ -506,6 +509,7 @@ export function actionsRoutes({ app, store, webhooks, baseUrl }: RouteContext): 
       actor_id: parent.actor_id,
       run_attempt: parent.run_attempt + 1,
       run_started_at: now,
+      logs: null,
     } as Omit<GitHubWorkflowRun, "id" | "created_at" | "updated_at">);
     gh.workflowRuns.update(run.id, { node_id: generateNodeId("WorkflowRun", run.id) });
     const created = gh.workflowRuns.get(run.id)!;
@@ -541,6 +545,67 @@ export function actionsRoutes({ app, store, webhooks, baseUrl }: RouteContext): 
     return c.body(null, 204);
   });
 
+  app.post("/repos/:owner/:repo/actions/runs/:run_id/rerun-failed-jobs", (c) => {
+    const owner = c.req.param("owner")!;
+    const repoName = c.req.param("repo")!;
+    const repo = lookupRepo(gh, owner, repoName);
+    if (!repo) throw notFoundResponse();
+    assertRepoWrite(gh, c.get("authUser"), repo);
+    const runId = parseInt(c.req.param("run_id")!, 10);
+    const run = gh.workflowRuns.get(runId);
+    if (!run || run.repo_id !== repo.id) throw notFoundResponse();
+    const failed = gh.jobs
+      .findBy("run_id", run.id)
+      .filter(
+        (job) =>
+          job.repo_id === repo.id &&
+          (job.conclusion === "failure" || job.conclusion === "timed_out" || job.conclusion === "cancelled"),
+      );
+    if (failed.length === 0) throw new ApiError(422, "No failed jobs to re-run");
+    const now = timestamp();
+    gh.workflowRuns.update(run.id, {
+      status: "queued",
+      conclusion: null,
+      run_attempt: run.run_attempt + 1,
+      run_started_at: now,
+    });
+    for (const job of failed) {
+      gh.jobs.update(job.id, {
+        status: "queued",
+        conclusion: null,
+        started_at: null,
+        completed_at: null,
+      });
+    }
+    return c.body(null, 201);
+  });
+
+  app.post("/repos/:owner/:repo/actions/jobs/:job_id/rerun", (c) => {
+    const owner = c.req.param("owner")!;
+    const repoName = c.req.param("repo")!;
+    const repo = lookupRepo(gh, owner, repoName);
+    if (!repo) throw notFoundResponse();
+    assertRepoWrite(gh, c.get("authUser"), repo);
+    const jobId = parseInt(c.req.param("job_id")!, 10);
+    const job = gh.jobs.get(jobId);
+    if (!job || job.repo_id !== repo.id) throw notFoundResponse();
+    const run = gh.workflowRuns.get(job.run_id);
+    if (!run || run.repo_id !== repo.id) throw notFoundResponse();
+    gh.workflowRuns.update(run.id, {
+      status: "queued",
+      conclusion: null,
+      run_attempt: run.run_attempt + 1,
+      run_started_at: timestamp(),
+    });
+    gh.jobs.update(job.id, {
+      status: "queued",
+      conclusion: null,
+      started_at: null,
+      completed_at: null,
+    });
+    return c.body(null, 201);
+  });
+
   app.get("/repos/:owner/:repo/actions/runs/:run_id/logs", (c) => {
     const owner = c.req.param("owner")!;
     const repoName = c.req.param("repo")!;
@@ -550,9 +615,13 @@ export function actionsRoutes({ app, store, webhooks, baseUrl }: RouteContext): 
     const runId = parseInt(c.req.param("run_id")!, 10);
     const run = gh.workflowRuns.get(runId);
     if (!run || run.repo_id !== repo.id) throw notFoundResponse();
-    return c.text(`2025-01-01T00:00:00.0000000Z Workflow run ${run.id} logs (stub)\n${run.head_sha}\n`, 200, {
-      "Content-Type": "text/plain; charset=utf-8",
-    });
+    return c.text(
+      run.logs ?? `2025-01-01T00:00:00.0000000Z Workflow run ${run.id} logs (stub)\n${run.head_sha}\n`,
+      200,
+      {
+        "Content-Type": "text/plain; charset=utf-8",
+      },
+    );
   });
 
   app.get("/repos/:owner/:repo/actions/runs/:run_id/jobs", (c) => {
@@ -592,7 +661,7 @@ export function actionsRoutes({ app, store, webhooks, baseUrl }: RouteContext): 
     const jobId = parseInt(c.req.param("job_id")!, 10);
     const job = gh.jobs.get(jobId);
     if (!job || job.repo_id !== repo.id) throw notFoundResponse();
-    return c.text(`2025-01-01T00:00:00.0000000Z Job ${job.id} logs (stub)\n`, 200, {
+    return c.text(job.logs ?? `2025-01-01T00:00:00.0000000Z Job ${job.id} logs (stub)\n`, 200, {
       "Content-Type": "text/plain; charset=utf-8",
     });
   });

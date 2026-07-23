@@ -197,6 +197,35 @@ github:
       name: hello-world
       language: JavaScript
       auto_init: true
+  workflows:
+    - owner: octocat
+      repo: hello-world
+      id: 101
+      name: CI
+      path: .github/workflows/ci.yml
+  workflow_runs:
+    - owner: octocat
+      repo: hello-world
+      workflow_id: 101
+      id: 1001
+      status: completed
+      conclusion: success
+      logs: Build completed successfully.
+  jobs:
+    - owner: octocat
+      repo: hello-world
+      run_id: 1001
+      id: 2001
+      name: test
+      status: completed
+      conclusion: success
+      logs: All tests passed.
+  artifacts:
+    - owner: octocat
+      repo: hello-world
+      run_id: 1001
+      id: 3001
+      name: test-results
 
 google:
   users:
@@ -280,6 +309,18 @@ google:
           values:
             - [ID, Status]
             - [BUG-1, Open]
+  presentations:
+    - id: slides_launch
+      user_email: testuser@example.com
+      title: Launch Review
+      slides:
+        - id: slide_title
+          layout: TITLE
+          elements:
+            - id: title_box
+              type: shape
+              placeholder_type: TITLE
+              text: Launch Review
 
 slack:
   team:
@@ -672,6 +713,11 @@ Every endpoint below is fully stateful. Creates, updates, and deletes persist in
 - `POST /repos/:owner/:repo/transfer` - transfer repo
 - `GET /repos/:owner/:repo/tags` - list tags
 
+### Contents
+- `GET /repos/:owner/:repo/contents/:path` - get a file or directory
+- `PUT /repos/:owner/:repo/contents/:path` - create or update file contents
+- `DELETE /repos/:owner/:repo/contents/:path` - delete a file
+
 ### Issues
 - `GET /repos/:owner/:repo/issues` - list (filter by state, labels, assignee, milestone, creator, since)
 - `POST /repos/:owner/:repo/issues` - create
@@ -696,6 +742,7 @@ Every endpoint below is fully stateful. Creates, updates, and deletes persist in
 ### Comments
 - Issue comments: full CRUD on `/repos/:owner/:repo/issues/:number/comments`
 - Review comments: full CRUD on `/repos/:owner/:repo/pulls/:number/comments`
+- `POST /repos/:owner/:repo/pulls/:number/comments/:comment_id/replies` - reply to a review comment
 - Commit comments: full CRUD on `/repos/:owner/:repo/commits/:sha/comments`
 - Repo-wide listings for each type
 
@@ -705,6 +752,7 @@ Every endpoint below is fully stateful. Creates, updates, and deletes persist in
 - `GET/PUT /repos/:owner/:repo/pulls/:number/reviews/:id` - get/update
 - `POST /repos/:owner/:repo/pulls/:number/reviews/:id/events` - submit
 - `PUT /repos/:owner/:repo/pulls/:number/reviews/:id/dismissals` - dismiss
+- `POST /graphql` - query, resolve, or unresolve review threads
 
 ### Labels & Milestones
 - Labels: full CRUD, add/remove from issues, replace all
@@ -717,6 +765,8 @@ Every endpoint below is fully stateful. Creates, updates, and deletes persist in
 - Trees: get (with recursive), create (with inline content)
 - Blobs: get, create
 - Tags: get, create
+- `POST /repos/:owner/:repo/statuses/:sha` - create a commit status
+- `GET /repos/:owner/:repo/commits/:ref/status` - get combined commit status
 
 ### Organizations & Teams
 - Orgs: get, update, list
@@ -744,9 +794,13 @@ Every endpoint below is fully stateful. Creates, updates, and deletes persist in
 
 ### Actions
 - Workflows: list, get, enable/disable, dispatch
-- Workflow runs: list, get, cancel, rerun, delete, logs
-- Jobs: list, get, logs
+- Workflow runs: list, get, cancel, rerun all jobs, rerun failed jobs, delete, logs
+- Jobs: list, get, rerun, logs
 - Artifacts: list, get, delete
+- Seed workflows with runs, jobs, logs, and artifacts for deterministic CI tests
+- `POST /repos/:owner/:repo/actions/runs/:run_id/rerun` - rerun all jobs
+- `POST /repos/:owner/:repo/actions/runs/:run_id/rerun-failed-jobs` - rerun failed jobs
+- `POST /repos/:owner/:repo/actions/jobs/:job_id/rerun` - rerun one job
 - Secrets: repo + org CRUD
 
 ### Checks
@@ -762,9 +816,9 @@ Every endpoint below is fully stateful. Creates, updates, and deletes persist in
 - `GET /zen` - random zen phrase
 - `GET /versions` - API versions
 
-## Google OAuth + Gmail, Calendar, Drive, Docs, and Sheets APIs
+## Google OAuth + Gmail, Calendar, Drive, Docs, Sheets, and Slides APIs
 
-OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local inbox, calendar, drive, document, and spreadsheet flows.
+OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local inbox, calendar, drive, document, spreadsheet, and presentation flows.
 
 - `GET /o/oauth2/v2/auth` - authorization endpoint
 - `POST /oauth2/token` - token exchange
@@ -791,6 +845,7 @@ OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local
 - `GET /drive/v3/files`, file metadata/create/update/delete/upload routes, native Docs/Sheets/Slides/Drawings export, user permission create/list/delete routes, and `GET /drive/v3/drives`
 - `POST /v1/documents`, `GET /v1/documents/:documentId`, `POST /v1/documents/:documentId:batchUpdate`
 - `POST /v4/spreadsheets`, `GET /v4/spreadsheets/:spreadsheetId`, value read/write/append/clear/batch-get routes, and `POST /v4/spreadsheets/:spreadsheetId:batchUpdate`
+- `POST /v1/presentations`, `GET /v1/presentations/:presentationId`, slide thumbnail routes, and `POST /v1/presentations/:presentationId:batchUpdate`
 
 ## Slack API
 
@@ -1241,7 +1296,7 @@ packages/
     adapter-nuxt/   # Nuxt server route integration
     vercel/         # Vercel API service
     github/         # GitHub API service
-    google/         # Google OAuth 2.0 / OIDC + Gmail, Calendar, Drive, Docs, Sheets
+    google/         # Google OAuth 2.0 / OIDC + Gmail, Calendar, Drive, Docs, Sheets, Slides
     slack/          # Slack Web API, OAuth v2, incoming webhooks
     linear/         # Linear GraphQL API, OAuth, webhooks
     twilio/         # Twilio Messaging, Verify, Voice, webhooks

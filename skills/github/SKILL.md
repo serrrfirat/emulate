@@ -1,6 +1,6 @@
 ---
 name: github
-description: Emulated GitHub REST API for local development and testing. Use when the user needs to interact with GitHub API endpoints locally, test GitHub integrations, emulate repos/issues/PRs, set up GitHub OAuth flows, configure GitHub Apps, test webhooks, or work with actions/checks without hitting the real GitHub API. Triggers include "GitHub API", "emulate GitHub", "mock GitHub", "test GitHub OAuth", "GitHub App JWT", "local GitHub", or any task requiring a local GitHub API.
+description: Emulated GitHub REST and review-thread GraphQL APIs for local development and testing. Use when the user needs to interact with GitHub API endpoints locally, test GitHub integrations, emulate repository contents, commit statuses, issues, pull requests, review threads, configure seeded Actions runs, set up GitHub OAuth flows, configure GitHub Apps, test webhooks, or work with checks without hitting the real GitHub API.
 allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 ---
 
@@ -152,6 +152,35 @@ github:
       name: org-repo
       description: An organization repository
       language: TypeScript
+  workflows:
+    - owner: octocat
+      repo: hello-world
+      id: 101
+      name: CI
+      path: .github/workflows/ci.yml
+  workflow_runs:
+    - owner: octocat
+      repo: hello-world
+      workflow_id: 101
+      id: 1001
+      status: completed
+      conclusion: success
+      logs: Build completed successfully.
+  jobs:
+    - owner: octocat
+      repo: hello-world
+      run_id: 1001
+      id: 2001
+      name: test
+      status: completed
+      conclusion: success
+      logs: All tests passed.
+  artifacts:
+    - owner: octocat
+      repo: hello-world
+      run_id: 1001
+      id: 3001
+      name: test-results
   oauth_apps:
     - client_id: Iv1.abc123
       client_secret: secret_abc123
@@ -235,6 +264,25 @@ curl -X DELETE http://localhost:4001/repos/octocat/hello-world \
 # Topics, languages, contributors, forks, collaborators, tags, transfer
 ```
 
+### Contents
+
+```bash
+# Read a file
+curl http://localhost:4001/repos/octocat/hello-world/contents/README.md
+
+# Create or update a file
+curl -X PUT http://localhost:4001/repos/octocat/hello-world/contents/docs/guide.md \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Update guide", "content": "IyBHdWlkZQo=", "branch": "main"}'
+
+# Delete a file
+curl -X DELETE http://localhost:4001/repos/octocat/hello-world/contents/docs/guide.md \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Remove guide", "sha": "<blob-sha>", "branch": "main"}'
+```
+
 ### Issues
 
 ```bash
@@ -286,6 +334,10 @@ curl http://localhost:4001/repos/octocat/hello-world/issues/comments/1
 
 # PR review comments
 curl http://localhost:4001/repos/octocat/hello-world/pulls/1/comments
+curl -X POST http://localhost:4001/repos/octocat/hello-world/pulls/1/comments/10/replies \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"body": "Addressed in the latest revision."}'
 
 # Commit comments
 curl http://localhost:4001/repos/octocat/hello-world/commits/abc123/comments
@@ -305,6 +357,12 @@ curl -X POST http://localhost:4001/repos/octocat/hello-world/pulls/1/reviews \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"event": "APPROVE", "body": "LGTM"}'
+
+# Minimal review-thread GraphQL supports queries, resolve, and unresolve
+curl -X POST http://localhost:4001/graphql \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"query ReviewThreads($owner: String!, $repo: String!, $number: Int!, $first: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { reviewThreads(first: $first) { nodes { id isResolved } } } } }","variables":{"owner":"octocat","repo":"hello-world","number":1,"first":20}}'
 ```
 
 ### Labels & Milestones
@@ -324,6 +382,14 @@ curl -X PUT http://localhost:4001/repos/octocat/hello-world/branches/main/protec
   -d '{"required_status_checks": {"strict": true, "contexts": ["ci"]}}'
 
 # Refs, commits, trees (recursive), blobs, tags, matching-refs
+
+# Create and read commit statuses
+curl -X POST http://localhost:4001/repos/octocat/hello-world/statuses/abc123 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"state": "success", "context": "ci/test", "description": "Tests passed"}'
+
+curl http://localhost:4001/repos/octocat/hello-world/commits/abc123/status
 ```
 
 ### Organizations & Teams
@@ -453,10 +519,20 @@ curl "http://localhost:4001/search/issues?q=repo:octocat/hello-world+is:open"
 
 ```bash
 # Workflows: list, get, enable/disable, dispatch
-# Workflow runs: list, get, cancel, rerun, delete, logs
-# Jobs: list, get, logs
+# Workflow runs: list, get, cancel, rerun all jobs, rerun failed jobs, delete, logs
+# Jobs: list, get, rerun, logs
 # Artifacts: list, get, delete
+# Seed workflows with runs, jobs, logs, and artifacts for deterministic CI tests
 # Secrets: repo + org CRUD
+
+curl -X POST http://localhost:4001/repos/octocat/hello-world/actions/runs/1001/rerun \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -X POST http://localhost:4001/repos/octocat/hello-world/actions/runs/1001/rerun-failed-jobs \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -X POST http://localhost:4001/repos/octocat/hello-world/actions/jobs/2001/rerun \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ### Checks

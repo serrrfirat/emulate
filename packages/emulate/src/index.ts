@@ -22,7 +22,8 @@ Framework adapters:
   Docs: https://emulate.dev/docs/nextjs and https://emulate.dev/docs/nuxt
 
 Workspace APIs:
-  Google includes Gmail, Calendar event updates, Drive sharing and shared drives, Docs, and Sheets.
+  GitHub includes contents, commit statuses, pull request review threads, and seeded Actions runs.
+  Google includes Gmail, Calendar event updates, Drive sharing and shared drives, Docs, Sheets, and Slides.
   Slack includes channels, messages, message search, OAuth, and webhooks.
 `,
   );

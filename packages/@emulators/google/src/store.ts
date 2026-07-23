@@ -17,6 +17,7 @@ import type {
   GoogleSharedDrive,
   GoogleDocument,
   GoogleSpreadsheet,
+  GooglePresentation,
 } from "./entities.js";
 
 export interface GoogleStore {
@@ -37,6 +38,7 @@ export interface GoogleStore {
   sharedDrives: Collection<GoogleSharedDrive>;
   documents: Collection<GoogleDocument>;
   spreadsheets: Collection<GoogleSpreadsheet>;
+  presentations: Collection<GooglePresentation>;
 }
 
 export function getGoogleStore(store: Store): GoogleStore {
@@ -73,5 +75,6 @@ export function getGoogleStore(store: Store): GoogleStore {
     sharedDrives: store.collection<GoogleSharedDrive>("google.shared_drives", ["google_id"]),
     documents: store.collection<GoogleDocument>("google.documents", ["google_id", "user_email"]),
     spreadsheets: store.collection<GoogleSpreadsheet>("google.spreadsheets", ["google_id", "user_email"]),
+    presentations: store.collection<GooglePresentation>("google.presentations", ["google_id", "user_email"]),
   };
 }

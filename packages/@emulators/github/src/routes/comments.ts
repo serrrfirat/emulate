@@ -511,6 +511,58 @@ export function commentsRoutes({ app, store, webhooks, baseUrl }: RouteContext):
     return c.json(commentFmt, 201);
   });
 
+  app.post("/repos/:owner/:repo/pulls/:pull_number/comments/:comment_id/replies", async (c) => {
+    const owner = c.req.param("owner")!;
+    const repoName = c.req.param("repo")!;
+    const repo = lookupRepo(gh, owner, repoName);
+    if (!repo) throw notFoundResponse();
+    const actor = assertRepoWrite(gh, c.get("authUser"), repo);
+    const pullNumber = parseInt(c.req.param("pull_number")!, 10);
+    const commentId = parseInt(c.req.param("comment_id")!, 10);
+    if (!Number.isFinite(pullNumber) || !Number.isFinite(commentId)) throw notFoundResponse();
+    const pr = findPull(gh, repo.id, pullNumber);
+    const parent = getCommentForRepo(gh, repo, commentId, "review");
+    if (!pr || !parent || parent.pull_number !== pullNumber) throw notFoundResponse();
+    const raw = await parseJsonBody(c);
+    if (typeof raw.body !== "string" || !raw.body.trim()) throw new ApiError(422, "Validation failed");
+
+    const row = gh.comments.insert({
+      node_id: "",
+      repo_id: repo.id,
+      issue_number: null,
+      pull_number: pullNumber,
+      commit_sha: parent.commit_sha ?? pr.head_sha,
+      body: raw.body,
+      user_id: actor.id,
+      in_reply_to_id: parent.in_reply_to_id ?? parent.id,
+      path: parent.path,
+      position: parent.position,
+      line: parent.line,
+      side: parent.side,
+      subject_type: parent.subject_type,
+      comment_type: "review",
+      review_id: parent.review_id,
+    } as Omit<GitHubComment, "id" | "created_at" | "updated_at">);
+    gh.comments.update(row.id, { node_id: generateNodeId("PullRequestReviewComment", row.id) });
+    const comment = gh.comments.get(row.id)!;
+    adjustPrReviewCommentCount(gh, pr, 1);
+    const commentFmt = formatComment(comment, gh, baseUrl)!;
+    webhooks.dispatch(
+      "pull_request_review_comment",
+      "created",
+      {
+        action: "created",
+        comment: commentFmt,
+        pull_request: formatPullRequest(pr, gh, baseUrl),
+        repository: formatRepo(repo, gh, baseUrl),
+        sender: formatUser(actor, baseUrl),
+      },
+      ownerLoginOf(gh, repo),
+      repo.name,
+    );
+    return c.json(commentFmt, 201);
+  });
+
   app.get("/repos/:owner/:repo/pulls/:pull_number/comments", (c) => {
     const owner = c.req.param("owner")!;
     const repoName = c.req.param("repo")!;

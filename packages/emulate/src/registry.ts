@@ -65,7 +65,7 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
   github: {
     label: "GitHub REST API emulator",
     endpoints:
-      "users, repos, issues, PRs, comments, reviews, labels, milestones, branches, git data, orgs, teams, releases, webhooks, search, actions, checks, rate limit",
+      "users, repos, contents, issues, PRs, review threads, comments, commit statuses, branches, git data, orgs, teams, releases, webhooks, search, seeded actions, checks, rate limit",
     async load() {
       const mod = await import("@emulators/github");
       return {
@@ -119,6 +119,47 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
             auto_init: true,
           },
         ],
+        workflows: [
+          {
+            owner: "octocat",
+            repo: "hello-world",
+            id: 101,
+            name: "CI",
+            path: ".github/workflows/ci.yml",
+          },
+        ],
+        workflow_runs: [
+          {
+            owner: "octocat",
+            repo: "hello-world",
+            workflow_id: 101,
+            id: 1001,
+            status: "completed",
+            conclusion: "success",
+            logs: "Build completed successfully.",
+          },
+        ],
+        jobs: [
+          {
+            owner: "octocat",
+            repo: "hello-world",
+            run_id: 1001,
+            id: 2001,
+            name: "test",
+            status: "completed",
+            conclusion: "success",
+            logs: "All tests passed.",
+          },
+        ],
+        artifacts: [
+          {
+            owner: "octocat",
+            repo: "hello-world",
+            run_id: 1001,
+            id: 3001,
+            name: "test-results",
+          },
+        ],
         oauth_apps: [
           {
             client_id: "Iv1.example_client_id",
@@ -132,9 +173,9 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
   },
 
   google: {
-    label: "Google OAuth 2.0 / OpenID Connect + Gmail, Calendar, Drive, Docs, and Sheets emulator",
+    label: "Google OAuth 2.0 / OpenID Connect + Gmail, Calendar, Drive, Docs, Sheets, and Slides emulator",
     endpoints:
-      "OAuth authorize, token exchange, userinfo, OIDC discovery, token revocation, Gmail messages/drafts/threads/labels/history/settings, Calendar lists/events/freebusy, Drive files/uploads/permissions/shared drives, Docs documents/batch updates, Sheets metadata/values/batch updates",
+      "OAuth authorize, token exchange, userinfo, OIDC discovery, token revocation, Gmail messages/drafts/threads/labels/history/settings, Calendar lists/events/freebusy, Drive files/uploads/permissions/shared drives, Docs documents/batch updates, Sheets metadata/values/batch updates, Slides presentations/thumbnails/batch updates",
     async load() {
       const mod = await import("@emulators/google");
       return { plugin: mod.googlePlugin, seedFromConfig: mod.seedFromConfig };
@@ -251,6 +292,20 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
             user_email: "testuser@example.com",
             title: "Bug Tracker",
             sheets: [{ id: 1, title: "Bugs", values: [["ID", "Status"]] }],
+          },
+        ],
+        presentations: [
+          {
+            id: "slides_launch",
+            user_email: "testuser@example.com",
+            title: "Launch Review",
+            slides: [
+              {
+                id: "slide_title",
+                layout: "TITLE",
+                elements: [{ id: "title_box", type: "shape", placeholder_type: "TITLE", text: "Launch Review" }],
+              },
+            ],
           },
         ],
       },

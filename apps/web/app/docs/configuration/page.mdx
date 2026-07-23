@@ -82,6 +82,35 @@ github:
       description: An organization repository
       language: TypeScript
       auto_init: true
+  workflows:
+    - owner: octocat
+      repo: hello-world
+      id: 101
+      name: CI
+      path: .github/workflows/ci.yml
+  workflow_runs:
+    - owner: octocat
+      repo: hello-world
+      workflow_id: 101
+      id: 1001
+      status: completed
+      conclusion: success
+      logs: Build completed successfully.
+  jobs:
+    - owner: octocat
+      repo: hello-world
+      run_id: 1001
+      id: 2001
+      name: test
+      status: completed
+      conclusion: success
+      logs: All tests passed.
+  artifacts:
+    - owner: octocat
+      repo: hello-world
+      run_id: 1001
+      id: 3001
+      name: test-results
 ```
 
 ## GitHub OAuth Apps
@@ -218,6 +247,18 @@ google:
           values:
             - [ID, Status]
             - [BUG-1, Open]
+  presentations:
+    - id: slides_launch
+      user_email: testuser@example.com
+      title: Launch Review
+      slides:
+        - id: slide_title
+          layout: TITLE
+          elements:
+            - id: title_box
+              type: shape
+              placeholder_type: TITLE
+              text: Launch Review
 ```
 
 ### Hosted domain (hd) claim
