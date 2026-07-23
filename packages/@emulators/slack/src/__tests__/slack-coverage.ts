@@ -13,7 +13,7 @@ export const slackCoverageMatrix: SlackCoverageEntry[] = [
   {
     family: "auth",
     method: "auth.test",
-    route: "POST /api/auth.test",
+    route: ["GET /api/auth.test", "POST /api/auth.test"],
     status: "supported",
     testedBy: ["slack.test.ts", "slack-sdk.test.ts"],
     notes: "Bearer token auth returns user and team identity.",
@@ -103,7 +103,7 @@ export const slackCoverageMatrix: SlackCoverageEntry[] = [
   {
     family: "conversations",
     method: "conversations.list",
-    route: "POST /api/conversations.list",
+    route: ["GET /api/conversations.list", "POST /api/conversations.list"],
     status: "partial",
     testedBy: ["slack.test.ts", "slack-sdk.test.ts"],
     notes:
@@ -112,7 +112,7 @@ export const slackCoverageMatrix: SlackCoverageEntry[] = [
   {
     family: "conversations",
     method: "conversations.info",
-    route: "POST /api/conversations.info",
+    route: ["GET /api/conversations.info", "POST /api/conversations.info"],
     status: "supported",
     testedBy: ["slack.test.ts", "slack-sdk.test.ts"],
     notes: "Returns seeded channel metadata.",
@@ -173,7 +173,7 @@ export const slackCoverageMatrix: SlackCoverageEntry[] = [
   {
     family: "conversations",
     method: "conversations.history",
-    route: "POST /api/conversations.history",
+    route: ["GET /api/conversations.history", "POST /api/conversations.history"],
     status: "partial",
     testedBy: ["slack.test.ts", "slack-sdk.test.ts"],
     notes: "Returns top level messages for a channel, including rich message fields. Time filtering is future work.",
@@ -181,7 +181,7 @@ export const slackCoverageMatrix: SlackCoverageEntry[] = [
   {
     family: "conversations",
     method: "conversations.replies",
-    route: "POST /api/conversations.replies",
+    route: ["GET /api/conversations.replies", "POST /api/conversations.replies"],
     status: "partial",
     testedBy: ["slack.test.ts", "slack-sdk.test.ts"],
     notes: "Returns parent and replies for a thread, including rich message fields.",
@@ -254,7 +254,7 @@ export const slackCoverageMatrix: SlackCoverageEntry[] = [
   {
     family: "users",
     method: "users.list",
-    route: "POST /api/users.list",
+    route: ["GET /api/users.list", "POST /api/users.list"],
     status: "partial",
     testedBy: ["slack.test.ts", "slack-sdk.test.ts"],
     notes: "Lists active users with simple cursor pagination.",
@@ -262,7 +262,7 @@ export const slackCoverageMatrix: SlackCoverageEntry[] = [
   {
     family: "users",
     method: "users.info",
-    route: "POST /api/users.info",
+    route: ["GET /api/users.info", "POST /api/users.info"],
     status: "supported",
     testedBy: ["slack.test.ts", "slack-sdk.test.ts"],
     notes: "Returns seeded user profile data.",
