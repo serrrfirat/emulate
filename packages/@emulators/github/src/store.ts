@@ -36,7 +36,7 @@ import type {
   GitHubApp,
   GitHubAppInstallation,
   GitHubOAuthGrant,
-  GitHubReviewThread,
+  GitHubReviewThreadResolution,
 } from "./entities.js";
 
 export interface GitHubStore {
@@ -76,7 +76,7 @@ export interface GitHubStore {
   apps: Collection<GitHubApp>;
   appInstallations: Collection<GitHubAppInstallation>;
   oauthGrants: Collection<GitHubOAuthGrant>;
-  reviewThreads: Collection<GitHubReviewThread>;
+  reviewThreadResolutions: Collection<GitHubReviewThreadResolution>;
 }
 
 export function getGitHubStore(store: Store): GitHubStore {
@@ -120,11 +120,8 @@ export function getGitHubStore(store: Store): GitHubStore {
       "installation_id",
     ]),
     oauthGrants: store.collection<GitHubOAuthGrant>("github.oauth_grants", ["user_id", "client_id"]),
-    reviewThreads: store.collection<GitHubReviewThread>("github.review_threads", [
-      "repo_id",
-      "pull_number",
+    reviewThreadResolutions: store.collection<GitHubReviewThreadResolution>("github.review_thread_resolutions", [
       "root_comment_id",
-      "node_id",
     ]),
   };
 }

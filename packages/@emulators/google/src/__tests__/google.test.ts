@@ -2292,4 +2292,301 @@ describe("Google plugin integration", () => {
       .find((element) => element.objectId === "shape_atomic");
     expect(shape?.shape.text.textElements).toHaveLength(1);
   });
+
+  it("rejects malformed and oversized Slides batches without partial updates", async () => {
+    const createRes = await jsonRequest(app, "/v1/presentations", {
+      method: "POST",
+      body: { title: "Bounded Slides" },
+    });
+    const created = (await createRes.json()) as {
+      presentationId: string;
+      slides: Array<{ objectId: string }>;
+    };
+    const slideId = created.slides[0].objectId;
+    const setupRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          {
+            createShape: {
+              objectId: "shape_bounded",
+              shapeType: "TEXT_BOX",
+              elementProperties: { pageObjectId: slideId },
+            },
+          },
+        ],
+      },
+    });
+    expect(setupRes.status).toBe(200);
+
+    const malformedRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          { insertText: { objectId: "shape_bounded", text: "must roll back", insertionIndex: 0 } },
+          "not a request",
+        ],
+      },
+    });
+    expect(malformedRes.status).toBe(400);
+
+    for (const requests of [undefined, [], [null]]) {
+      const invalidRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+        method: "POST",
+        body: requests === undefined ? {} : { requests },
+      });
+      expect(invalidRes.status).toBe(400);
+    }
+
+    const tooManyRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: Array.from({ length: 1_001 }, () => ({
+          deleteObject: { objectId: "missing" },
+        })),
+      },
+    });
+    expect(tooManyRes.status).toBe(413);
+
+    const oversizedTextRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [{ insertText: { objectId: "shape_bounded", text: "x".repeat(1_000_001) } }],
+      },
+    });
+    expect(oversizedTextRes.status).toBe(413);
+
+    const oversizedBodyRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [{ insertText: { objectId: "shape_bounded", text: "x".repeat(2 * 1024 * 1024) } }],
+      },
+    });
+    expect(oversizedBodyRes.status).toBe(413);
+
+    const readRes = await app.request(`${base}/v1/presentations/${created.presentationId}`, {
+      headers: authHeaders(),
+    });
+    const presentation = (await readRes.json()) as {
+      slides: Array<{
+        pageElements: Array<{
+          objectId: string;
+          shape?: { text: { textElements: Array<{ textRun?: { content: string } }> } };
+        }>;
+      }>;
+    };
+    const shape = presentation.slides
+      .flatMap((slide) => slide.pageElements)
+      .find((element) => element.objectId === "shape_bounded");
+    expect(shape?.shape?.text.textElements.flatMap((entry) => entry.textRun?.content ?? []).join("")).toBe("");
+  });
+
+  it("allows only one concurrent Slides writer for a required revision", async () => {
+    const createRes = await jsonRequest(app, "/v1/presentations", {
+      method: "POST",
+      body: { title: "Concurrent Slides" },
+    });
+    const created = (await createRes.json()) as {
+      presentationId: string;
+      revisionId: string;
+      slides: Array<{ objectId: string }>;
+    };
+
+    const concurrent = await Promise.all(
+      ["slide_writer_a", "slide_writer_b"].map((objectId) =>
+        jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+          method: "POST",
+          body: {
+            writeControl: { requiredRevisionId: created.revisionId },
+            requests: [{ createSlide: { objectId } }],
+          },
+        }),
+      ),
+    );
+    expect(concurrent.map((response) => response.status).sort()).toEqual([200, 400]);
+
+    const staleRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        writeControl: { requiredRevisionId: created.revisionId },
+        requests: [{ createSlide: { objectId: "slide_stale" } }],
+      },
+    });
+    expect(staleRes.status).toBe(400);
+    expect(await staleRes.json()).toMatchObject({
+      error: { status: "FAILED_PRECONDITION" },
+    });
+
+    const readRes = await app.request(`${base}/v1/presentations/${created.presentationId}`, {
+      headers: authHeaders(),
+    });
+    const presentation = (await readRes.json()) as { slides: Array<{ objectId: string }> };
+    expect(
+      presentation.slides.filter((slide) => ["slide_writer_a", "slide_writer_b"].includes(slide.objectId)),
+    ).toHaveLength(1);
+    expect(presentation.slides.map((slide) => slide.objectId)).not.toContain("slide_stale");
+  });
+
+  it("validates Slides numeric boundaries, duplicate IDs, and ranges atomically", async () => {
+    const createRes = await jsonRequest(app, "/v1/presentations", {
+      method: "POST",
+      body: { title: "Validated Slides" },
+    });
+    const created = (await createRes.json()) as {
+      presentationId: string;
+      slides: Array<{ objectId: string }>;
+    };
+    const slideId = created.slides[0].objectId;
+
+    const setupRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          {
+            createShape: {
+              objectId: "shape_validated",
+              shapeType: "TEXT_BOX",
+              elementProperties: { pageObjectId: slideId },
+            },
+          },
+          { insertText: { objectId: "shape_validated", text: "abcdef", insertionIndex: 0 } },
+        ],
+      },
+    });
+    expect(setupRes.status).toBe(200);
+
+    const invalidBatches = [
+      {
+        requests: [
+          { insertText: { objectId: "shape_validated", text: "rollback", insertionIndex: 6 } },
+          { createSlide: { objectId: slideId } },
+        ],
+      },
+      {
+        requests: [
+          { createSlide: { objectId: "slide_never_created" } },
+          { createSlide: { objectId: "slide_never_created" } },
+        ],
+      },
+      {
+        requests: [
+          { insertText: { objectId: "shape_validated", text: "rollback", insertionIndex: 6 } },
+          { createSlide: { objectId: "invalid_index", insertionIndex: Number.MAX_SAFE_INTEGER } },
+        ],
+      },
+      {
+        requests: [
+          { insertText: { objectId: "shape_validated", text: "rollback", insertionIndex: 6 } },
+          {
+            updateTextStyle: {
+              objectId: "shape_validated",
+              textRange: { type: "FIXED_RANGE", startIndex: -1, endIndex: 99 },
+              style: { bold: true },
+            },
+          },
+        ],
+      },
+    ];
+
+    for (const body of invalidBatches) {
+      const invalidRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+        method: "POST",
+        body,
+      });
+      expect(invalidRes.status).toBe(400);
+    }
+
+    const readRes = await app.request(`${base}/v1/presentations/${created.presentationId}`, {
+      headers: authHeaders(),
+    });
+    const presentation = (await readRes.json()) as {
+      slides: Array<{
+        objectId: string;
+        pageElements: Array<{
+          objectId: string;
+          shape?: { text: { textElements: Array<{ textRun?: { content: string } }> } };
+        }>;
+      }>;
+    };
+    const shape = presentation.slides
+      .flatMap((slide) => slide.pageElements)
+      .find((element) => element.objectId === "shape_validated");
+    expect(shape?.shape?.text.textElements.flatMap((entry) => entry.textRun?.content ?? []).join("")).toBe("abcdef");
+    expect(presentation.slides.map((slide) => slide.objectId)).not.toContain("slide_never_created");
+  });
+
+  it("preserves range-specific Slides text and paragraph styles", async () => {
+    const createRes = await jsonRequest(app, "/v1/presentations", {
+      method: "POST",
+      body: { title: "Range Styles" },
+    });
+    const created = (await createRes.json()) as {
+      presentationId: string;
+      slides: Array<{ objectId: string }>;
+    };
+
+    const updateRes = await jsonRequest(app, `/v1/presentations/${created.presentationId}:batchUpdate`, {
+      method: "POST",
+      body: {
+        requests: [
+          {
+            createShape: {
+              objectId: "shape_ranges",
+              shapeType: "TEXT_BOX",
+              elementProperties: { pageObjectId: created.slides[0].objectId },
+            },
+          },
+          { insertText: { objectId: "shape_ranges", text: "abcdef", insertionIndex: 0 } },
+          {
+            updateTextStyle: {
+              objectId: "shape_ranges",
+              textRange: { type: "FIXED_RANGE", startIndex: 1, endIndex: 3 },
+              style: { bold: true },
+            },
+          },
+          {
+            updateParagraphStyle: {
+              objectId: "shape_ranges",
+              textRange: { type: "FIXED_RANGE", startIndex: 3, endIndex: 6 },
+              style: { alignment: "CENTER" },
+            },
+          },
+        ],
+      },
+    });
+    expect(updateRes.status).toBe(200);
+
+    const readRes = await app.request(`${base}/v1/presentations/${created.presentationId}`, {
+      headers: authHeaders(),
+    });
+    const presentation = (await readRes.json()) as {
+      slides: Array<{
+        pageElements: Array<{
+          objectId: string;
+          shape?: {
+            text: {
+              textElements: Array<{
+                textRun?: { content: string; style: Record<string, unknown> };
+                paragraphMarker?: { style: Record<string, unknown> };
+              }>;
+            };
+          };
+        }>;
+      }>;
+    };
+    const elements =
+      presentation.slides.flatMap((slide) => slide.pageElements).find((element) => element.objectId === "shape_ranges")
+        ?.shape?.text.textElements ?? [];
+    const textRuns = elements.flatMap((entry) => (entry.textRun ? [entry.textRun] : []));
+    expect(textRuns).toEqual([
+      { content: "a", style: {} },
+      { content: "bc", style: { bold: true } },
+      { content: "def", style: {} },
+    ]);
+    expect(
+      elements
+        .filter((entry) => entry.paragraphMarker?.style.alignment === "CENTER")
+        .map((entry) => entry.paragraphMarker),
+    ).toEqual([{ style: { alignment: "CENTER" } }]);
+  });
 });

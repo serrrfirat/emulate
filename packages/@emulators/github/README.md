@@ -39,6 +39,7 @@ npm install @emulators/github
 - `GET /repos/:owner/:repo/tags` — list tags
 
 ### Contents
+- `GET /repos/:owner/:repo/contents` — list the repository root
 - `GET /repos/:owner/:repo/contents/:path` — get a file or directory
 - `PUT /repos/:owner/:repo/contents/:path` — create or update file contents
 - `DELETE /repos/:owner/:repo/contents/:path` — delete a file

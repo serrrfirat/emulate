@@ -12,9 +12,9 @@ import { githubPlugin, seedFromConfig } from "../index.js";
 
 const base = "http://localhost:4000";
 
-function authHeaders(json = false): Record<string, string> {
+function authHeaders(json = false, token = "test-token"): Record<string, string> {
   return {
-    Authorization: "Bearer test-token",
+    Authorization: `Bearer ${token}`,
     ...(json ? { "Content-Type": "application/json" } : {}),
   };
 }
@@ -22,7 +22,13 @@ function authHeaders(json = false): Record<string, string> {
 function createTestApp() {
   const store = new Store();
   const webhooks = new WebhookDispatcher();
-  const tokenMap: TokenMap = new Map([["test-token", { login: "octocat", id: 1, scopes: ["repo", "workflow"] }]]);
+  const tokenMap: TokenMap = new Map([
+    ["test-token", { login: "octocat", id: 1, scopes: ["repo", "workflow"] }],
+    ["outsider-token", { login: "outsider", id: 2, scopes: ["repo"] }],
+    ["limited-token", { login: "octocat", id: 1, scopes: ["user"] }],
+    ["statuses-app-token", { login: "octocat", id: 1, scopes: ["statuses:write"] }],
+    ["actions-app-token", { login: "octocat", id: 1, scopes: ["actions:write"] }],
+  ]);
   const app = new Hono();
   app.onError(createApiErrorHandler());
   app.use("*", createErrorHandler());
@@ -30,7 +36,10 @@ function createTestApp() {
   githubPlugin.register(app as never, store, webhooks, base, tokenMap);
   githubPlugin.seed?.(store, base);
   seedFromConfig(store, base, {
-    users: [{ login: "octocat", name: "Octo Cat", email: "octocat@example.com" }],
+    users: [
+      { login: "octocat", name: "Octo Cat", email: "octocat@example.com" },
+      { login: "outsider", name: "Outside User" },
+    ],
     repos: [
       { owner: "octocat", name: "hello-world" },
       { owner: "octocat", name: "other-repo" },
@@ -54,6 +63,14 @@ function createTestApp() {
         conclusion: "failure",
         logs: "seeded run logs\n",
       },
+      {
+        id: 202,
+        owner: "octocat",
+        repo: "hello-world",
+        workflow_id: 101,
+        status: "completed",
+        conclusion: "success",
+      },
     ],
     jobs: [
       {
@@ -65,6 +82,15 @@ function createTestApp() {
         status: "completed",
         conclusion: "failure",
         logs: "seeded job logs\n",
+      },
+      {
+        id: 302,
+        owner: "octocat",
+        repo: "hello-world",
+        run_id: 202,
+        name: "successful-test",
+        status: "completed",
+        conclusion: "success",
       },
     ],
     artifacts: [
@@ -191,6 +217,25 @@ describe("GitHub IronClaw provider gaps", () => {
         { context: "ci/test", state: "success" },
       ],
     });
+
+    const outsider = await app.request(`${base}/repos/octocat/hello-world/statuses/${sha}`, {
+      method: "POST",
+      headers: authHeaders(true, "outsider-token"),
+      body: JSON.stringify({ state: "success" }),
+    });
+    expect(outsider.status).toBe(403);
+    const limited = await app.request(`${base}/repos/octocat/hello-world/statuses/${sha}`, {
+      method: "POST",
+      headers: authHeaders(true, "limited-token"),
+      body: JSON.stringify({ state: "success" }),
+    });
+    expect(limited.status).toBe(403);
+    const appStatus = await app.request(`${base}/repos/octocat/hello-world/statuses/${sha}`, {
+      method: "POST",
+      headers: authHeaders(true, "statuses-app-token"),
+      body: JSON.stringify({ state: "success", context: "app/status" }),
+    });
+    expect(appStatus.status).toBe(201);
   });
 
   it("supports the review reply alias and persists GraphQL thread resolution", async () => {
@@ -320,6 +365,33 @@ describe("GitHub IronClaw provider gaps", () => {
       body: "{}",
     });
     expect(wrongRepo.status).toBe(404);
+
+    const noFailedJobs = await app.request(`${base}/repos/octocat/hello-world/actions/runs/202/rerun-failed-jobs`, {
+      method: "POST",
+      headers: authHeaders(true),
+      body: "{}",
+    });
+    expect(noFailedJobs.status).toBe(422);
+    expect(await noFailedJobs.json()).toMatchObject({ message: "No failed jobs to re-run" });
+
+    const outsiderRerun = await app.request(`${base}/repos/octocat/hello-world/actions/runs/201/rerun`, {
+      method: "POST",
+      headers: authHeaders(true, "outsider-token"),
+      body: "{}",
+    });
+    expect(outsiderRerun.status).toBe(403);
+    const limitedRerun = await app.request(`${base}/repos/octocat/hello-world/actions/runs/201/rerun-failed-jobs`, {
+      method: "POST",
+      headers: authHeaders(true, "limited-token"),
+      body: "{}",
+    });
+    expect(limitedRerun.status).toBe(403);
+    const appRerun = await app.request(`${base}/repos/octocat/hello-world/actions/runs/202/rerun-failed-jobs`, {
+      method: "POST",
+      headers: authHeaders(true, "actions-app-token"),
+      body: "{}",
+    });
+    expect(appRerun.status).toBe(422);
 
     const rerunFailed = await app.request(`${base}/repos/octocat/hello-world/actions/runs/201/rerun-failed-jobs`, {
       method: "POST",

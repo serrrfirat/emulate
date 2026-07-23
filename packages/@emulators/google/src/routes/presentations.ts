@@ -1,5 +1,5 @@
 import type { RouteContext } from "@emulators/core";
-import type { GoogleSlide, GoogleSlideElement } from "../entities.js";
+import type { GoogleSlide, GoogleSlideElement, GoogleSlideShapeElement, GoogleSlideStyleRun } from "../entities.js";
 import { googleApiError } from "../helpers.js";
 import {
   cloneSlides,
@@ -10,22 +10,25 @@ import {
   getPresentationById,
   updatePresentationSlides,
 } from "../presentation-helpers.js";
-import {
-  getFiniteNumber,
-  getRecord,
-  getRecordArray,
-  getString,
-  parseGoogleBody,
-  requireGoogleAuth,
-} from "../route-helpers.js";
+import { getFiniteNumber, getRecord, getString, parseGoogleBody, requireGoogleAuth } from "../route-helpers.js";
 import { getGoogleStore } from "../store.js";
+
+const MAX_BATCH_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_BATCH_REQUESTS = 1_000;
+const MAX_TEXT_LENGTH = 1_000_000;
+
+type ObjectReference =
+  | { kind: "slide"; slide: GoogleSlide }
+  | { kind: "element"; slide: GoogleSlide; element: GoogleSlideElement };
 
 interface WorkingPresentation {
   presentationId: string;
   slides: GoogleSlide[];
+  objects: Map<string, ObjectReference>;
+  textLength: number;
 }
 
-type ApplyResult = { reply: Record<string, unknown> } | { error: string };
+type ApplyResult = { reply: Record<string, unknown> } | { error: string; status?: 400 | 413 };
 
 export function presentationRoutes({ app, store }: RouteContext): void {
   const gs = getGoogleStore(store);
@@ -75,7 +78,8 @@ export function presentationRoutes({ app, store }: RouteContext): void {
     const authEmail = requireGoogleAuth(c);
     if (authEmail instanceof Response) return authEmail;
 
-    const body = await parseGoogleBody(c);
+    const body = await parseGoogleBody(c, MAX_BATCH_BODY_BYTES);
+    if (body instanceof Response) return body;
     const presentation = getPresentationById(gs, authEmail, c.req.param("presentationId"));
     if (!presentation) {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
@@ -90,13 +94,49 @@ export function presentationRoutes({ app, store }: RouteContext): void {
     const working: WorkingPresentation = {
       presentationId: presentation.google_id,
       slides: cloneSlides(presentation.slides),
+      objects: new Map(),
+      textLength: 0,
     };
+    const indexError = indexPresentationObjects(working);
+    if (indexError) {
+      return googleApiError(c, 400, indexError, "badRequest", "INVALID_ARGUMENT");
+    }
+    if (working.textLength > MAX_TEXT_LENGTH) {
+      return googleApiError(c, 413, "Presentation text is too large.", "badRequest", "RESOURCE_EXHAUSTED");
+    }
+
+    const requests = body.requests;
+    if (
+      !Array.isArray(requests) ||
+      requests.length === 0 ||
+      requests.length > MAX_BATCH_REQUESTS ||
+      !requests.every(isRecord)
+    ) {
+      const status = Array.isArray(requests) && requests.length > MAX_BATCH_REQUESTS ? 413 : 400;
+      const statusCode = status === 413 ? "RESOURCE_EXHAUSTED" : "INVALID_ARGUMENT";
+      return googleApiError(
+        c,
+        status,
+        status === 413
+          ? `A batch can contain at most ${MAX_BATCH_REQUESTS} requests.`
+          : "requests must be a non-empty array of request objects.",
+        "badRequest",
+        statusCode,
+      );
+    }
     const replies: Record<string, unknown>[] = [];
 
-    for (const request of getRecordArray(body, "requests")) {
+    for (const request of requests) {
       const result = applyPresentationRequest(working, request);
       if ("error" in result) {
-        return googleApiError(c, 400, result.error, "badRequest", "INVALID_ARGUMENT");
+        const status = result.status ?? 400;
+        return googleApiError(
+          c,
+          status,
+          result.error,
+          "badRequest",
+          status === 413 ? "RESOURCE_EXHAUSTED" : "INVALID_ARGUMENT",
+        );
       }
       replies.push(result.reply);
     }
@@ -133,7 +173,9 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
       return { error: "Invalid slide insertion index." };
     }
     const slide = createSlideRecord({ id: objectId, layout });
+    if (objectIdExists(presentation, slide.object_id)) return { error: "Object ID already exists." };
     presentation.slides.splice(insertionIndex, 0, slide);
+    presentation.objects.set(slide.object_id, { kind: "slide", slide });
     return { reply: { createSlide: { objectId: slide.object_id } } };
   }
 
@@ -141,17 +183,23 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
   if (deleteObject) {
     const objectId = getString(deleteObject, "objectId");
     if (!objectId) return { error: "deleteObject requires an objectId." };
-    const slideIndex = presentation.slides.findIndex((slide) => slide.object_id === objectId);
-    if (slideIndex >= 0) {
+    const reference = presentation.objects.get(objectId);
+    if (reference?.kind === "slide") {
+      const slideIndex = presentation.slides.indexOf(reference.slide);
       presentation.slides.splice(slideIndex, 1);
+      presentation.objects.delete(reference.slide.object_id);
+      for (const element of reference.slide.page_elements) {
+        if (element.element_type === "shape") presentation.textLength -= element.text.length;
+        presentation.objects.delete(element.object_id);
+      }
       return { reply: {} };
     }
-    for (const slide of presentation.slides) {
-      const elementIndex = slide.page_elements.findIndex((element) => element.object_id === objectId);
-      if (elementIndex >= 0) {
-        slide.page_elements.splice(elementIndex, 1);
-        return { reply: {} };
-      }
+    if (reference?.kind === "element") {
+      const elementIndex = reference.slide.page_elements.indexOf(reference.element);
+      reference.slide.page_elements.splice(elementIndex, 1);
+      if (reference.element.element_type === "shape") presentation.textLength -= reference.element.text.length;
+      presentation.objects.delete(reference.element.object_id);
+      return { reply: {} };
     }
     return { error: "Object was not found." };
   }
@@ -161,11 +209,15 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
     const element = findShape(presentation, getString(insertText, "objectId"));
     if (!element) return { error: "Text shape was not found." };
     const text = getString(insertText, "text") ?? "";
+    if (text.length > MAX_TEXT_LENGTH || presentation.textLength + text.length > MAX_TEXT_LENGTH) {
+      return { error: "Presentation text exceeds the supported size.", status: 413 };
+    }
     const insertionIndex = getFiniteNumber(insertText, "insertionIndex") ?? 0;
     if (!Number.isSafeInteger(insertionIndex) || insertionIndex < 0 || insertionIndex > element.text.length) {
       return { error: "Invalid text insertion index." };
     }
-    element.text = element.text.slice(0, insertionIndex) + text + element.text.slice(insertionIndex);
+    insertElementText(element, insertionIndex, text);
+    presentation.textLength += text.length;
     return { reply: {} };
   }
 
@@ -175,7 +227,8 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
     if (!element) return { error: "Text shape was not found." };
     const range = resolveTextRange(getRecord(deleteText, "textRange"), element.text.length);
     if (!range) return { error: "Invalid text deletion range." };
-    element.text = element.text.slice(0, range.start) + element.text.slice(range.end);
+    deleteElementText(element, range.start, range.end);
+    presentation.textLength -= range.end - range.start;
     return { reply: {} };
   }
 
@@ -185,13 +238,28 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
     const find = getString(containsText ?? {}, "text");
     if (!find) return { error: "replaceAllText requires search text." };
     const replaceText = getString(replaceAllText, "replaceText") ?? "";
+    if (find.length > MAX_TEXT_LENGTH || replaceText.length > MAX_TEXT_LENGTH) {
+      return { error: "Replacement text exceeds the supported size.", status: 413 };
+    }
     const pattern = new RegExp(escapeRegExp(find), containsText?.matchCase === true ? "g" : "gi");
     let occurrencesChanged = 0;
     for (const slide of presentation.slides) {
       for (const element of slide.page_elements) {
         if (element.element_type !== "shape") continue;
-        occurrencesChanged += Array.from(element.text.matchAll(pattern)).length;
-        element.text = element.text.replace(pattern, () => replaceText);
+        const matches = Array.from(element.text.matchAll(pattern));
+        occurrencesChanged += matches.length;
+        const resultingLength = element.text.length + matches.length * (replaceText.length - find.length);
+        if (
+          resultingLength > MAX_TEXT_LENGTH ||
+          presentation.textLength - element.text.length + resultingLength > MAX_TEXT_LENGTH
+        ) {
+          return { error: "Presentation text exceeds the supported size.", status: 413 };
+        }
+        presentation.textLength += resultingLength - element.text.length;
+        for (const match of matches.reverse()) {
+          const start = match.index;
+          replaceElementText(element, start, start + match[0].length, replaceText);
+        }
       }
     }
     return { reply: { replaceAllText: { occurrencesChanged } } };
@@ -211,7 +279,9 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
       size: getRecord(elementProperties ?? {}, "size"),
       transform: getRecord(elementProperties ?? {}, "transform"),
     });
+    if (objectIdExists(presentation, element.object_id)) return { error: "Object ID already exists." };
     slide.page_elements.push(element);
+    presentation.objects.set(element.object_id, { kind: "element", slide, element });
     return { reply: { createShape: { objectId: element.object_id } } };
   }
 
@@ -231,7 +301,9 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
       size: getRecord(elementProperties ?? {}, "size"),
       transform: getRecord(elementProperties ?? {}, "transform"),
     });
+    if (objectIdExists(presentation, element.object_id)) return { error: "Object ID already exists." };
     slide.page_elements.push(element);
+    presentation.objects.set(element.object_id, { kind: "element", slide, element });
     return { reply: { createImage: { objectId: element.object_id } } };
   }
 
@@ -240,10 +312,11 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
     const element = findShape(presentation, getString(updateTextStyle, "objectId"));
     const style = getRecord(updateTextStyle, "style");
     if (!element || !style) return { error: "updateTextStyle requires a text shape and style." };
-    if (!resolveTextRange(getRecord(updateTextStyle, "textRange"), element.text.length)) {
+    const range = resolveTextRange(getRecord(updateTextStyle, "textRange"), element.text.length);
+    if (!range) {
       return { error: "Invalid text style range." };
     }
-    element.text_style = { ...element.text_style, ...style };
+    addStyleRun(element.text_style_runs, range.start, range.end, style);
     return { reply: {} };
   }
 
@@ -252,10 +325,11 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
     const element = findShape(presentation, getString(updateParagraphStyle, "objectId"));
     const style = getRecord(updateParagraphStyle, "style");
     if (!element || !style) return { error: "updateParagraphStyle requires a text shape and style." };
-    if (!resolveTextRange(getRecord(updateParagraphStyle, "textRange"), element.text.length)) {
+    const range = resolveTextRange(getRecord(updateParagraphStyle, "textRange"), element.text.length);
+    if (!range) {
       return { error: "Invalid paragraph style range." };
     }
-    element.paragraph_style = { ...element.paragraph_style, ...style };
+    addStyleRun(element.paragraph_style_runs, range.start, range.end, style);
     return { reply: {} };
   }
 
@@ -269,17 +343,21 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
     const needle = matchCase ? find : find.toLowerCase();
     let occurrencesChanged = 0;
     for (const slide of presentation.slides) {
-      for (const element of slide.page_elements) {
+      for (let elementIndex = 0; elementIndex < slide.page_elements.length; elementIndex += 1) {
+        const element = slide.page_elements[elementIndex];
         if (element.element_type !== "shape") continue;
         const haystack = matchCase ? element.text : element.text.toLowerCase();
         if (!haystack.includes(needle)) continue;
-        element.element_type = "image";
-        element.shape_type = null;
-        element.placeholder_type = null;
-        element.text = "";
-        element.image_url = imageUrl;
-        element.text_style = {};
-        element.paragraph_style = {};
+        const image: GoogleSlideElement = {
+          object_id: element.object_id,
+          element_type: "image",
+          image_url: imageUrl,
+          size: element.size,
+          transform: element.transform,
+        };
+        slide.page_elements[elementIndex] = image;
+        presentation.objects.set(image.object_id, { kind: "element", slide, element: image });
+        presentation.textLength -= element.text.length;
         occurrencesChanged += 1;
       }
     }
@@ -290,22 +368,107 @@ function applyPresentationRequest(presentation: WorkingPresentation, request: Re
 }
 
 function findSlide(presentation: WorkingPresentation, objectId: string | undefined): GoogleSlide | undefined {
-  return objectId ? presentation.slides.find((slide) => slide.object_id === objectId) : undefined;
+  if (!objectId) return undefined;
+  const reference = presentation.objects.get(objectId);
+  return reference?.kind === "slide" ? reference.slide : undefined;
 }
 
-function findShape(presentation: WorkingPresentation, objectId: string | undefined): GoogleSlideElement | undefined {
+function findShape(
+  presentation: WorkingPresentation,
+  objectId: string | undefined,
+): GoogleSlideShapeElement | undefined {
   if (!objectId) return undefined;
+  const reference = presentation.objects.get(objectId);
+  return reference?.kind === "element" && reference.element.element_type === "shape" ? reference.element : undefined;
+}
+
+function objectIdExists(presentation: WorkingPresentation, objectId: string): boolean {
+  return presentation.objects.has(objectId);
+}
+
+function indexPresentationObjects(presentation: WorkingPresentation): string | undefined {
   for (const slide of presentation.slides) {
-    const element = slide.page_elements.find((candidate) => candidate.object_id === objectId);
-    if (element?.element_type === "shape") return element;
+    if (presentation.objects.has(slide.object_id)) return "Object ID already exists.";
+    presentation.objects.set(slide.object_id, { kind: "slide", slide });
+    for (const element of slide.page_elements) {
+      if (presentation.objects.has(element.object_id)) return "Object ID already exists.";
+      presentation.objects.set(element.object_id, { kind: "element", slide, element });
+      if (element.element_type === "shape") presentation.textLength += element.text.length;
+    }
   }
   return undefined;
 }
 
-function objectIdExists(presentation: WorkingPresentation, objectId: string): boolean {
-  return presentation.slides.some(
-    (slide) => slide.object_id === objectId || slide.page_elements.some((element) => element.object_id === objectId),
-  );
+function insertElementText(element: GoogleSlideShapeElement, index: number, text: string): void {
+  if (text.length === 0) return;
+  element.text = element.text.slice(0, index) + text + element.text.slice(index);
+  shiftRunsForInsertion(element.text_style_runs, index, text.length);
+  shiftRunsForInsertion(element.paragraph_style_runs, index, text.length);
+}
+
+function deleteElementText(element: GoogleSlideShapeElement, start: number, end: number): void {
+  if (start === end) return;
+  element.text = element.text.slice(0, start) + element.text.slice(end);
+  shiftRunsForDeletion(element.text_style_runs, start, end);
+  shiftRunsForDeletion(element.paragraph_style_runs, start, end);
+}
+
+function replaceElementText(element: GoogleSlideShapeElement, start: number, end: number, replacement: string): void {
+  const inheritedTextStyle = resolveStyleAt(element.text_style_runs, start);
+  const inheritedParagraphStyle = resolveStyleAt(element.paragraph_style_runs, start);
+  deleteElementText(element, start, end);
+  insertElementText(element, start, replacement);
+  if (replacement.length > 0) {
+    if (Object.keys(inheritedTextStyle).length > 0) {
+      addStyleRun(element.text_style_runs, start, start + replacement.length, inheritedTextStyle);
+    }
+    if (Object.keys(inheritedParagraphStyle).length > 0) {
+      addStyleRun(element.paragraph_style_runs, start, start + replacement.length, inheritedParagraphStyle);
+    }
+  }
+}
+
+function shiftRunsForInsertion(runs: GoogleSlideStyleRun[], index: number, length: number): void {
+  for (const run of runs) {
+    if (index < run.start_index) {
+      run.start_index += length;
+      run.end_index += length;
+    } else if (index <= run.end_index) {
+      run.end_index += length;
+    }
+  }
+}
+
+function shiftRunsForDeletion(runs: GoogleSlideStyleRun[], start: number, end: number): void {
+  const deletedLength = end - start;
+  const mapIndex = (index: number) => {
+    if (index <= start) return index;
+    if (index >= end) return index - deletedLength;
+    return start;
+  };
+  for (const run of runs) {
+    run.start_index = mapIndex(run.start_index);
+    run.end_index = mapIndex(run.end_index);
+  }
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    if (runs[index].end_index <= runs[index].start_index) runs.splice(index, 1);
+  }
+}
+
+function addStyleRun(runs: GoogleSlideStyleRun[], start: number, end: number, style: Record<string, unknown>): void {
+  if (start === end) return;
+  runs.push({ start_index: start, end_index: end, style: { ...style } });
+}
+
+function resolveStyleAt(runs: GoogleSlideStyleRun[], index: number): Record<string, unknown> {
+  const style: Record<string, unknown> = {};
+  for (const run of runs) {
+    const withinRun =
+      run.start_index <= index &&
+      (index < run.end_index || (index === run.end_index && run.end_index === run.start_index));
+    if (withinRun) Object.assign(style, run.style);
+  }
+  return style;
 }
 
 function resolveTextRange(
@@ -351,4 +514,8 @@ function escapeXml(value: string): string {
     };
     return entities[character] ?? character;
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

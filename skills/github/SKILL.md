@@ -6,7 +6,7 @@ allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 
 # GitHub API Emulator
 
-Fully stateful GitHub REST API emulation. Creates, updates, and deletes persist in memory and affect related entities.
+Fully stateful GitHub REST and review-thread GraphQL API emulation. Creates, updates, and deletes persist in memory and affect related entities.
 
 ## Start
 
@@ -267,6 +267,9 @@ curl -X DELETE http://localhost:4001/repos/octocat/hello-world \
 ### Contents
 
 ```bash
+# List the repository root
+curl http://localhost:4001/repos/octocat/hello-world/contents
+
 # Read a file
 curl http://localhost:4001/repos/octocat/hello-world/contents/README.md
 

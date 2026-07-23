@@ -44,7 +44,7 @@ export function statusesRoutes({ app, store, baseUrl }: RouteContext): void {
   app.post("/repos/:owner/:repo/statuses/:sha", async (c) => {
     const repo = lookupRepo(gh, c.req.param("owner")!, c.req.param("repo")!);
     if (!repo) throw notFoundResponse();
-    const actor = assertRepoWrite(gh, c.get("authUser"), repo);
+    const actor = assertRepoWrite(gh, c.get("authUser"), repo, "statuses");
     const sha = resolveSha(gh, repo, c.req.param("sha")!);
     if (!sha) throw notFoundResponse();
     const body = await parseJsonBody(c);

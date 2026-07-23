@@ -290,6 +290,10 @@ export function commentsRoutes({ app, store, webhooks, baseUrl }: RouteContext):
     const ownerLogin = ownerLoginOf(gh, repo);
 
     gh.comments.delete(comment.id);
+    if (comment.in_reply_to_id === null) {
+      const resolution = gh.reviewThreadResolutions.findOneBy("root_comment_id", comment.id);
+      if (resolution) gh.reviewThreadResolutions.delete(resolution.id);
+    }
     if (pr) adjustPrReviewCommentCount(gh, pr, -1);
 
     webhooks.dispatch(

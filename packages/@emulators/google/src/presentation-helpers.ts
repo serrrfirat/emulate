@@ -1,5 +1,11 @@
 import { createDriveItemRecord, getDriveItemById } from "./drive-helpers.js";
-import type { GooglePresentation, GoogleSlide, GoogleSlideElement } from "./entities.js";
+import type {
+  GooglePresentation,
+  GoogleSlide,
+  GoogleSlideElement,
+  GoogleSlideShapeElement,
+  GoogleSlideStyleRun,
+} from "./entities.js";
 import { generateUid } from "./helpers.js";
 import type { GoogleStore } from "./store.js";
 
@@ -74,13 +80,21 @@ export function updatePresentationSlides(
 export function cloneSlides(slides: GoogleSlide[]): GoogleSlide[] {
   return slides.map((slide) => ({
     ...slide,
-    page_elements: slide.page_elements.map((element) => ({
-      ...element,
-      size: element.size ? { ...element.size } : null,
-      transform: element.transform ? { ...element.transform } : null,
-      text_style: { ...element.text_style },
-      paragraph_style: { ...element.paragraph_style },
-    })),
+    page_elements: slide.page_elements.map((element) =>
+      element.element_type === "shape"
+        ? {
+            ...element,
+            size: element.size ? { ...element.size } : null,
+            transform: element.transform ? { ...element.transform } : null,
+            text_style_runs: cloneStyleRuns(element.text_style_runs),
+            paragraph_style_runs: cloneStyleRuns(element.paragraph_style_runs),
+          }
+        : {
+            ...element,
+            size: element.size ? { ...element.size } : null,
+            transform: element.transform ? { ...element.transform } : null,
+          },
+    ),
   }));
 }
 
@@ -108,17 +122,26 @@ export function createSlideElementRecord(input?: {
   transform?: Record<string, unknown>;
 }): GoogleSlideElement {
   const elementType = input?.type ?? "shape";
-  return {
+  const common = {
     object_id: input?.id ?? generateUid(elementType),
-    element_type: elementType,
-    shape_type: elementType === "shape" ? (input?.shape_type ?? "TEXT_BOX") : null,
-    placeholder_type: input?.placeholder_type ?? null,
-    text: input?.text ?? "",
-    image_url: elementType === "image" ? (input?.image_url ?? "") : null,
     size: input?.size ? { ...input.size } : null,
     transform: input?.transform ? { ...input.transform } : null,
-    text_style: {},
-    paragraph_style: {},
+  };
+  if (elementType === "image") {
+    return {
+      ...common,
+      element_type: "image",
+      image_url: input?.image_url ?? "",
+    };
+  }
+  return {
+    ...common,
+    element_type: "shape",
+    shape_type: input?.shape_type ?? "TEXT_BOX",
+    placeholder_type: input?.placeholder_type ?? null,
+    text: input?.text ?? "",
+    text_style_runs: [],
+    paragraph_style_runs: [],
   };
 }
 
@@ -146,37 +169,91 @@ function formatPageElement(element: GoogleSlideElement) {
   if (element.element_type === "image") {
     return {
       ...common,
-      image: { contentUrl: element.image_url ?? "" },
+      image: { contentUrl: element.image_url },
     };
   }
 
-  const textLength = element.text.length;
   return {
     ...common,
     shape: {
-      shapeType: element.shape_type ?? "TEXT_BOX",
+      shapeType: element.shape_type,
       placeholder: element.placeholder_type ? { type: element.placeholder_type } : undefined,
       text: {
-        textElements: [
-          {
-            startIndex: 0,
-            endIndex: textLength,
-            paragraphMarker: { style: element.paragraph_style },
-          },
-          ...(textLength > 0
-            ? [
-                {
-                  startIndex: 0,
-                  endIndex: textLength,
-                  textRun: {
-                    content: element.text,
-                    style: element.text_style,
-                  },
-                },
-              ]
-            : []),
-        ],
+        textElements: formatTextElements(element),
       },
     },
   };
+}
+
+function cloneStyleRuns(runs: GoogleSlideStyleRun[]): GoogleSlideStyleRun[] {
+  return runs.map((run) => ({ ...run, style: { ...run.style } }));
+}
+
+function formatTextElements(element: GoogleSlideShapeElement): Array<Record<string, unknown>> {
+  if (element.text.length === 0) {
+    return [{ startIndex: 0, endIndex: 0, paragraphMarker: { style: {} } }];
+  }
+
+  const boundaries = new Set([0, element.text.length]);
+  for (const run of [...element.text_style_runs, ...element.paragraph_style_runs]) {
+    boundaries.add(run.start_index);
+    boundaries.add(run.end_index);
+  }
+  const positions = [...boundaries].sort((left, right) => left - right);
+  const segments: Array<{
+    start: number;
+    end: number;
+    paragraphStyle: Record<string, unknown>;
+    textStyle: Record<string, unknown>;
+  }> = [];
+
+  for (let index = 0; index < positions.length - 1; index += 1) {
+    const start = positions[index];
+    const end = positions[index + 1];
+    if (end <= start) continue;
+    const paragraphStyle = resolveStyleAt(element.paragraph_style_runs, start);
+    const textStyle = resolveStyleAt(element.text_style_runs, start);
+    const previous = segments.at(-1);
+    if (
+      previous &&
+      recordsEqual(previous.paragraphStyle, paragraphStyle) &&
+      recordsEqual(previous.textStyle, textStyle)
+    ) {
+      previous.end = end;
+    } else {
+      segments.push({ start, end, paragraphStyle, textStyle });
+    }
+  }
+
+  const result: Array<Record<string, unknown>> = [];
+  for (const segment of segments) {
+    result.push({
+      startIndex: segment.start,
+      endIndex: segment.end,
+      paragraphMarker: { style: segment.paragraphStyle },
+    });
+    result.push({
+      startIndex: segment.start,
+      endIndex: segment.end,
+      textRun: {
+        content: element.text.slice(segment.start, segment.end),
+        style: segment.textStyle,
+      },
+    });
+  }
+  return result;
+}
+
+function resolveStyleAt(runs: GoogleSlideStyleRun[], index: number): Record<string, unknown> {
+  const style: Record<string, unknown> = {};
+  for (const run of runs) {
+    if (run.start_index <= index && index < run.end_index) {
+      Object.assign(style, run.style);
+    }
+  }
+  return style;
+}
+
+function recordsEqual(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }

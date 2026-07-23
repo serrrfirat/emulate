@@ -220,18 +220,33 @@ export interface GoogleSpreadsheet extends Entity {
   sheets: GoogleSheet[];
 }
 
-export interface GoogleSlideElement {
+export interface GoogleSlideStyleRun {
+  start_index: number;
+  end_index: number;
+  style: Record<string, unknown>;
+}
+
+interface GoogleSlideElementBase {
   object_id: string;
-  element_type: "shape" | "image";
-  shape_type: string | null;
-  placeholder_type: string | null;
-  text: string;
-  image_url: string | null;
   size: Record<string, unknown> | null;
   transform: Record<string, unknown> | null;
-  text_style: Record<string, unknown>;
-  paragraph_style: Record<string, unknown>;
 }
+
+export interface GoogleSlideShapeElement extends GoogleSlideElementBase {
+  element_type: "shape";
+  shape_type: string;
+  placeholder_type: string | null;
+  text: string;
+  text_style_runs: GoogleSlideStyleRun[];
+  paragraph_style_runs: GoogleSlideStyleRun[];
+}
+
+export interface GoogleSlideImageElement extends GoogleSlideElementBase {
+  element_type: "image";
+  image_url: string;
+}
+
+export type GoogleSlideElement = GoogleSlideShapeElement | GoogleSlideImageElement;
 
 export interface GoogleSlide {
   object_id: string;

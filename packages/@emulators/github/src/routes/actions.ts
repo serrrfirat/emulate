@@ -487,7 +487,7 @@ export function actionsRoutes({ app, store, webhooks, baseUrl }: RouteContext): 
     const repoName = c.req.param("repo")!;
     const repo = lookupRepo(gh, owner, repoName);
     if (!repo) throw notFoundResponse();
-    assertRepoRead(gh, c.get("authUser"), repo);
+    assertRepoWrite(gh, c.get("authUser"), repo, "actions");
     const runId = parseInt(c.req.param("run_id")!, 10);
     const parent = gh.workflowRuns.get(runId);
     if (!parent || parent.repo_id !== repo.id) throw notFoundResponse();
@@ -550,7 +550,7 @@ export function actionsRoutes({ app, store, webhooks, baseUrl }: RouteContext): 
     const repoName = c.req.param("repo")!;
     const repo = lookupRepo(gh, owner, repoName);
     if (!repo) throw notFoundResponse();
-    assertRepoWrite(gh, c.get("authUser"), repo);
+    assertRepoWrite(gh, c.get("authUser"), repo, "actions");
     const runId = parseInt(c.req.param("run_id")!, 10);
     const run = gh.workflowRuns.get(runId);
     if (!run || run.repo_id !== repo.id) throw notFoundResponse();
@@ -585,7 +585,7 @@ export function actionsRoutes({ app, store, webhooks, baseUrl }: RouteContext): 
     const repoName = c.req.param("repo")!;
     const repo = lookupRepo(gh, owner, repoName);
     if (!repo) throw notFoundResponse();
-    assertRepoWrite(gh, c.get("authUser"), repo);
+    assertRepoWrite(gh, c.get("authUser"), repo, "actions");
     const jobId = parseInt(c.req.param("job_id")!, 10);
     const job = gh.jobs.get(jobId);
     if (!job || job.repo_id !== repo.id) throw notFoundResponse();

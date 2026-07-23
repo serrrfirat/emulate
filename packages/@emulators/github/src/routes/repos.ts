@@ -235,6 +235,10 @@ function deleteRepoCascade(gh: GitHubStore, repo: GitHubRepo) {
   delByRepo(gh.pullRequests);
   delByRepo(gh.labels);
   delByRepo(gh.milestones);
+  for (const comment of gh.comments.findBy("repo_id", repoId)) {
+    const resolution = gh.reviewThreadResolutions.findOneBy("root_comment_id", comment.id);
+    if (resolution) gh.reviewThreadResolutions.delete(resolution.id);
+  }
   delByRepo(gh.comments);
   delByRepo(gh.reviews);
   delByRepo(gh.issueEvents);

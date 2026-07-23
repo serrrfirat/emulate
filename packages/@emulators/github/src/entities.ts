@@ -429,13 +429,9 @@ export interface GitHubJob extends Entity {
   }>;
 }
 
-export interface GitHubReviewThread extends Entity {
-  node_id: string;
-  repo_id: number;
-  pull_number: number;
+export interface GitHubReviewThreadResolution extends Entity {
   root_comment_id: number;
-  is_resolved: boolean;
-  resolved_by_id: number | null;
+  resolved_by_id: number;
 }
 
 export interface GitHubArtifact extends Entity {
