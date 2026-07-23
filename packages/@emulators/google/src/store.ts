@@ -70,7 +70,7 @@ export function getGoogleStore(store: Store): GoogleStore {
       "user_email",
       "file_google_id",
     ]),
-    sharedDrives: store.collection<GoogleSharedDrive>("google.shared_drives", ["google_id", "user_email"]),
+    sharedDrives: store.collection<GoogleSharedDrive>("google.shared_drives", ["google_id"]),
     documents: store.collection<GoogleDocument>("google.documents", ["google_id", "user_email"]),
     spreadsheets: store.collection<GoogleSpreadsheet>("google.spreadsheets", ["google_id", "user_email"]),
   };

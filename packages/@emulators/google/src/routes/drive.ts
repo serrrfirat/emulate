@@ -7,6 +7,7 @@ import {
   deleteDrivePermissionRecord,
   formatDriveItemResource,
   getDriveItemById,
+  indexDrivePermissions,
   listDriveItems,
   listDrivePermissions,
   listSharedDrives,
@@ -72,11 +73,12 @@ export function driveRoutes({ app, store }: RouteContext): void {
       corpora: url.searchParams.get("corpora"),
       driveId: url.searchParams.get("driveId"),
     });
+    const permissionsByItemId = indexDrivePermissions(gs, response.files);
 
     return c.json({
       kind: "drive#fileList",
       files: response.files.map((item) =>
-        formatDriveItemResource(item, listDrivePermissions(gs, item.user_email, item.google_id), authEmail),
+        formatDriveItemResource(item, permissionsByItemId.get(item.id) ?? [], authEmail),
       ),
       nextPageToken: response.nextPageToken,
     });
@@ -191,14 +193,6 @@ export function driveRoutes({ app, store }: RouteContext): void {
     const authEmail = requireGoogleAuth(c);
     if (authEmail instanceof Response) return authEmail;
 
-    const item = getDriveItemById(gs, authEmail, c.req.param("fileId"));
-    if (!item) {
-      return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
-    }
-    if (item.user_email !== authEmail) {
-      return googleApiError(c, 403, "The user does not have sufficient permissions.", "forbidden", "PERMISSION_DENIED");
-    }
-
     const body = await parseGoogleBody(c);
     const role = getString(body, "role");
     const permissionType = getString(body, "type");
@@ -206,6 +200,14 @@ export function driveRoutes({ app, store }: RouteContext): void {
     const validRoles = new Set(["reader", "commenter", "writer", "organizer"]);
     if (!role || !validRoles.has(role) || permissionType !== "user" || !emailAddress) {
       return googleApiError(c, 400, "Invalid permission.", "badRequest", "INVALID_ARGUMENT");
+    }
+
+    const item = getDriveItemById(gs, authEmail, c.req.param("fileId"));
+    if (!item) {
+      return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
+    }
+    if (item.user_email !== authEmail) {
+      return googleApiError(c, 403, "The user does not have sufficient permissions.", "forbidden", "PERMISSION_DENIED");
     }
 
     const permission = createDrivePermissionRecord(gs, {

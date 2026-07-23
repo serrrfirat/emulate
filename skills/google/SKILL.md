@@ -189,8 +189,8 @@ google:
       data: "# Hello World"
   shared_drives:
     - id: shared_design
-      user_email: testuser@gmail.com
       name: Design Team
+      member_emails: [testuser@gmail.com, reviewer@example.com]
   drive_permissions:
     - id: perm_reviewer
       user_email: testuser@gmail.com

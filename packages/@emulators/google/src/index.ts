@@ -142,6 +142,7 @@ export interface GoogleSeedDrivePermission {
 export interface GoogleSeedSharedDrive {
   id: string;
   user_email?: string;
+  member_emails?: string[];
   name: string;
 }
 
@@ -598,17 +599,23 @@ function seedDrivePermissions(store: Store, permissions: GoogleSeedDrivePermissi
 function seedSharedDrives(store: Store, drives: GoogleSeedSharedDrive[], fallbackEmail: string): void {
   const gs = getGoogleStore(store);
   for (const drive of drives) {
-    const userEmail = drive.user_email ?? fallbackEmail;
-    const existing = gs.sharedDrives
-      .findBy("user_email", userEmail)
-      .find((candidate) => candidate.google_id === drive.id);
-    if (!existing) {
-      gs.sharedDrives.insert({
-        google_id: drive.id,
-        user_email: userEmail,
-        name: drive.name,
+    const legacyMemberEmail = drive.user_email ?? (drive.member_emails?.length ? undefined : fallbackEmail);
+    const memberEmails = Array.from(
+      new Set([...(legacyMemberEmail ? [legacyMemberEmail] : []), ...(drive.member_emails ?? [])]),
+    );
+    const existing = gs.sharedDrives.findOneBy("google_id", drive.id);
+    if (existing) {
+      gs.sharedDrives.update(existing.id, {
+        member_emails: Array.from(new Set([...existing.member_emails, ...memberEmails])),
       });
+      continue;
     }
+
+    gs.sharedDrives.insert({
+      google_id: drive.id,
+      name: drive.name,
+      member_emails: memberEmails,
+    });
   }
 }
 

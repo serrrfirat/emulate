@@ -16,7 +16,7 @@ export interface GoogleDriveItemInput {
   starred?: boolean;
   trashed?: boolean;
   drive_google_id?: string | null;
-  owners?: GoogleDriveItem["owners"];
+  owners?: NonNullable<GoogleDriveItem["owners"]>;
   data?: string | null;
 }
 
@@ -37,6 +37,13 @@ export interface ParsedDriveUpload {
         body: Buffer;
       }
     | undefined;
+}
+
+type DriveAccessLevel = "owner" | "shared-drive" | "writer" | "reader" | "none";
+
+interface DriveAccessIndex {
+  permissionRoles: Map<string, string>;
+  sharedDriveIds: Set<string>;
 }
 
 export function createDriveItemRecord(gs: GoogleStore, input: GoogleDriveItemInput): GoogleDriveItem {
@@ -64,20 +71,10 @@ export function createDriveItemRecord(gs: GoogleStore, input: GoogleDriveItemInp
 }
 
 export function getDriveItemById(gs: GoogleStore, userEmail: string, fileId: string): GoogleDriveItem | undefined {
-  const owned = gs.driveItems.findBy("user_email", userEmail).find((item) => item.google_id === fileId);
-  if (owned) return owned;
-  return gs.driveItems.all().find((item) => {
-    if (item.google_id !== fileId) return false;
-    if (isSharedDriveMember(gs, userEmail, item.drive_google_id)) return true;
-    return gs.drivePermissions
-      .all()
-      .some(
-        (permission) =>
-          permission.user_email === item.user_email &&
-          permission.file_google_id === item.google_id &&
-          permission.email_address === userEmail,
-      );
-  });
+  const accessIndex = buildDriveAccessIndex(gs, userEmail);
+  return gs.driveItems
+    .findBy("google_id", fileId)
+    .find((item) => item.google_id === fileId && driveAccessLevel(userEmail, item, accessIndex) !== "none");
 }
 
 export function listDriveItems(
@@ -85,23 +82,13 @@ export function listDriveItems(
   userEmail: string,
   options: DriveListOptions,
 ): { files: GoogleDriveItem[]; nextPageToken?: string } {
-  const sharedFileKeys = new Set(
-    gs.drivePermissions
-      .all()
-      .filter((permission) => permission.email_address === userEmail)
-      .map((permission) => driveItemKey(permission.user_email, permission.file_google_id)),
-  );
-  const sharedDriveIds = new Set(gs.sharedDrives.findBy("user_email", userEmail).map((drive) => drive.google_id));
-  let items = [
-    ...gs.driveItems.findBy("user_email", userEmail),
-    ...gs.driveItems.all().filter((item) => {
-      if (item.user_email === userEmail) return false;
-      return (
-        sharedFileKeys.has(driveItemKey(item.user_email, item.google_id)) ||
-        (item.drive_google_id !== null && sharedDriveIds.has(item.drive_google_id))
-      );
-    }),
-  ];
+  const accessIndex = buildDriveAccessIndex(gs, userEmail);
+  const accessByItem = new Map<number, DriveAccessLevel>();
+  let items = gs.driveItems.all().filter((item) => {
+    const access = driveAccessLevel(userEmail, item, accessIndex);
+    accessByItem.set(item.id, access);
+    return access !== "none";
+  });
   const parsed = parseDriveQuery(options.q ?? null);
 
   if (options.corpora === "drive" && options.driveId) {
@@ -134,13 +121,14 @@ export function listDriveItems(
   }
 
   if (parsed.requireStarred) {
-    items = items.filter((item) => item.starred);
+    items = items.filter((item) => item.starred ?? false);
   }
 
   if (parsed.requireShared) {
-    items = items.filter(
-      (item) => item.user_email !== userEmail && sharedFileKeys.has(driveItemKey(item.user_email, item.google_id)),
-    );
+    items = items.filter((item) => {
+      const access = accessByItem.get(item.id);
+      return access === "reader" || access === "writer";
+    });
   }
 
   if (options.orderBy?.includes("name")) {
@@ -183,7 +171,7 @@ export function updateDriveItemRecord(
       name: input.name ?? item.name,
       description: input.description === undefined ? item.description : input.description,
       parent_google_ids: normalizeParentIds(Array.from(nextParents)),
-      starred: input.starred ?? item.starred,
+      starred: input.starred ?? item.starred ?? false,
       trashed: input.trashed ?? item.trashed,
       web_view_link: buildDriveWebViewLink(item.google_id, item.mime_type),
     }) ?? item
@@ -192,9 +180,10 @@ export function updateDriveItemRecord(
 
 export function formatDriveItemResource(
   item: GoogleDriveItem,
-  permissions: GoogleDrivePermission[] = [],
-  viewerEmail = item.user_email,
+  permissions: GoogleDrivePermission[],
+  viewerEmail: string,
 ) {
+  const owners = item.owners ?? [{ email_address: item.user_email, display_name: null }];
   return {
     kind: "drive#file",
     id: item.google_id,
@@ -206,12 +195,12 @@ export function formatDriveItemResource(
     createdTime: item.created_at,
     modifiedTime: item.updated_at,
     size: item.size != null ? String(item.size) : undefined,
-    shared: permissions.length > 0 || item.drive_google_id !== null,
-    starred: item.starred,
+    shared: permissions.length > 0 || item.drive_google_id != null,
+    starred: item.starred ?? false,
     trashed: item.trashed || undefined,
-    ownedByMe: item.owners.some((owner) => owner.email_address === viewerEmail),
+    ownedByMe: owners.some((owner) => owner.email_address === viewerEmail),
     driveId: item.drive_google_id ?? undefined,
-    owners: item.owners.map((owner) => ({
+    owners: owners.map((owner) => ({
       emailAddress: owner.email_address,
       displayName: owner.display_name ?? undefined,
     })),
@@ -224,22 +213,50 @@ export function listDrivePermissions(gs: GoogleStore, userEmail: string, fileId:
     .filter((permission) => permission.file_google_id === fileId);
 }
 
-export function canEditDriveItem(gs: GoogleStore, userEmail: string, item: GoogleDriveItem): boolean {
-  if (item.user_email === userEmail) return true;
-  if (isSharedDriveMember(gs, userEmail, item.drive_google_id)) return true;
-  return gs.drivePermissions
-    .findBy("user_email", item.user_email)
-    .some(
-      (permission) =>
-        permission.file_google_id === item.google_id &&
-        permission.email_address === userEmail &&
-        (permission.role === "writer" || permission.role === "organizer"),
-    );
+export function indexDrivePermissions(gs: GoogleStore, items: GoogleDriveItem[]): Map<number, GoogleDrivePermission[]> {
+  const itemIdsByKey = new Map(items.map((item) => [driveItemKey(item.user_email, item.google_id), item.id]));
+  const permissionsByItemId = new Map<number, GoogleDrivePermission[]>();
+
+  for (const permission of gs.drivePermissions.all()) {
+    const itemId = itemIdsByKey.get(driveItemKey(permission.user_email, permission.file_google_id));
+    if (itemId === undefined) continue;
+    const permissions = permissionsByItemId.get(itemId) ?? [];
+    permissions.push(permission);
+    permissionsByItemId.set(itemId, permissions);
+  }
+
+  return permissionsByItemId;
 }
 
-function isSharedDriveMember(gs: GoogleStore, userEmail: string, driveId: string | null): boolean {
-  if (!driveId) return false;
-  return gs.sharedDrives.findBy("user_email", userEmail).some((candidate) => candidate.google_id === driveId);
+export function canEditDriveItem(gs: GoogleStore, userEmail: string, item: GoogleDriveItem): boolean {
+  const access = driveAccessLevel(userEmail, item, buildDriveAccessIndex(gs, userEmail));
+  return access === "owner" || access === "shared-drive" || access === "writer";
+}
+
+function buildDriveAccessIndex(gs: GoogleStore, userEmail: string): DriveAccessIndex {
+  const permissionRoles = new Map<string, string>();
+  for (const permission of gs.drivePermissions.all()) {
+    if (permission.email_address === userEmail) {
+      permissionRoles.set(driveItemKey(permission.user_email, permission.file_google_id), permission.role);
+    }
+  }
+  const sharedDriveIds = new Set(
+    gs.sharedDrives
+      .all()
+      .filter((drive) => drive.member_emails.includes(userEmail))
+      .map((drive) => drive.google_id),
+  );
+  return { permissionRoles, sharedDriveIds };
+}
+
+function driveAccessLevel(userEmail: string, item: GoogleDriveItem, accessIndex: DriveAccessIndex): DriveAccessLevel {
+  if (item.user_email === userEmail) return "owner";
+  if (item.drive_google_id && accessIndex.sharedDriveIds.has(item.drive_google_id)) return "shared-drive";
+
+  const role = accessIndex.permissionRoles.get(driveItemKey(item.user_email, item.google_id));
+  if (role === "writer" || role === "organizer") return "writer";
+  if (role === "reader" || role === "commenter") return "reader";
+  return "none";
 }
 
 function driveItemKey(ownerEmail: string, fileId: string): string {
@@ -297,7 +314,8 @@ export function deleteDrivePermissionRecord(
 export function listSharedDrives(gs: GoogleStore, userEmail: string, pageSize: string | null): GoogleSharedDrive[] {
   const limit = normalizeLimit(pageSize, 25, 100);
   return gs.sharedDrives
-    .findBy("user_email", userEmail)
+    .all()
+    .filter((drive) => drive.member_emails.includes(userEmail))
     .sort((left, right) => left.name.localeCompare(right.name))
     .slice(0, limit);
 }

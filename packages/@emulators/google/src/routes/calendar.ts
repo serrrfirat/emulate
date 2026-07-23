@@ -107,6 +107,7 @@ export function calendarRoutes({ app, store }: RouteContext): void {
     const authEmail = requireGoogleAuth(c);
     if (authEmail instanceof Response) return authEmail;
 
+    const body = await parseGoogleBody(c);
     const event = getCalendarEventById(gs, authEmail, c.req.param("calendarId"), c.req.param("eventId"));
     if (!event) {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
@@ -116,7 +117,6 @@ export function calendarRoutes({ app, store }: RouteContext): void {
       return googleApiError(c, 412, "Precondition check failed.", "conditionNotMet", "FAILED_PRECONDITION");
     }
 
-    const body = await parseGoogleBody(c);
     const parsed = parseCalendarEventInputFromBody(body);
     const patch = {
       ...(body.status !== undefined ? { status: parsed.status } : {}),
@@ -147,6 +147,14 @@ export function calendarRoutes({ app, store }: RouteContext): void {
       ...(body.transparency !== undefined ? { transparency: parsed.transparency } : {}),
       ...(body.reminders !== undefined ? { reminders: parsed.reminders } : {}),
     };
+    const nextStartDateTime = body.start !== undefined ? parsed.start_date_time : event.start_date_time;
+    const nextStartDate = body.start !== undefined ? parsed.start_date : event.start_date;
+    const nextEndDateTime = body.end !== undefined ? parsed.end_date_time : event.end_date_time;
+    const nextEndDate = body.end !== undefined ? parsed.end_date : event.end_date;
+    if ((!nextStartDateTime && !nextStartDate) || (!nextEndDateTime && !nextEndDate)) {
+      return googleApiError(c, 400, "Event start and end are required.", "invalidArgument", "INVALID_ARGUMENT");
+    }
+
     const updated = updateCalendarEventRecord(gs, event, patch);
     return c.json(formatCalendarEventResource(gs, updated));
   };

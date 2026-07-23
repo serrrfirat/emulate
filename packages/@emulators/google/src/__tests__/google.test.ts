@@ -11,6 +11,7 @@ import {
 } from "@emulators/core";
 import { googlePlugin, seedFromConfig } from "../index.js";
 import { buildRawMessage } from "../helpers.js";
+import { getGoogleStore } from "../store.js";
 
 const base = "http://localhost:4000";
 
@@ -224,8 +225,11 @@ function createTestApp() {
       },
     ],
     shared_drives: [
-      { id: "shared_design", user_email: "testuser@example.com", name: "Design Team" },
-      { id: "shared_design", user_email: "consumer@gmail.com", name: "Design Team" },
+      {
+        id: "shared_design",
+        name: "Design Team",
+        member_emails: ["testuser@example.com", "consumer@gmail.com"],
+      },
     ],
     documents: [
       {
@@ -272,7 +276,7 @@ function createTestApp() {
     ],
   });
 
-  return { app };
+  return { app, store };
 }
 
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
@@ -1170,6 +1174,37 @@ describe("Google plugin integration", () => {
       headers: authHeaders(),
     });
     expect(missingEventRes.status).toBe(404);
+
+    const missingPatchRes = await jsonRequest(app, "/calendar/v3/calendars/primary/events/missing", {
+      method: "PATCH",
+      body: { summary: "Still missing" },
+    });
+    expect(missingPatchRes.status).toBe(404);
+
+    const invalidRangeRes = await jsonRequest(app, "/calendar/v3/calendars/primary/events/evt_kickoff", {
+      method: "PATCH",
+      body: { start: {} },
+    });
+    expect(invalidRangeRes.status).toBe(400);
+  });
+
+  it("rejects one of two concurrent Calendar patches with the same ETag", async () => {
+    const getEventRes = await app.request(`${base}/calendar/v3/calendars/primary/events/evt_kickoff`, {
+      headers: authHeaders(),
+    });
+    const event = (await getEventRes.json()) as { etag: string };
+
+    const responses = await Promise.all(
+      ["First update", "Second update"].map((summary) =>
+        jsonRequest(app, "/calendar/v3/calendars/primary/events/evt_kickoff", {
+          method: "PATCH",
+          headers: { "If-Match": event.etag },
+          body: { summary },
+        }),
+      ),
+    );
+
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 412]);
   });
 
   it("covers Drive file lifecycle, sharing, and shared drives", async () => {
@@ -1326,6 +1361,36 @@ describe("Google plugin integration", () => {
     });
     expect(forbiddenUpdateRes.status).toBe(403);
 
+    const forbiddenDeleteRes = await app.request(`${base}/drive/v3/files/${uploaded.id}`, {
+      method: "DELETE",
+      headers: { Authorization: "Bearer consumer-token" },
+    });
+    expect(forbiddenDeleteRes.status).toBe(403);
+    const forbiddenShareRes = await jsonRequest(app, `/drive/v3/files/${uploaded.id}/permissions`, {
+      method: "POST",
+      headers: { Authorization: "Bearer consumer-token" },
+      body: { type: "user", role: "reader", emailAddress: "reviewer@example.com" },
+    });
+    expect(forbiddenShareRes.status).toBe(403);
+    const forbiddenPermissionDeleteRes = await app.request(
+      `${base}/drive/v3/files/${uploaded.id}/permissions/${permission.id}`,
+      { method: "DELETE", headers: { Authorization: "Bearer consumer-token" } },
+    );
+    expect(forbiddenPermissionDeleteRes.status).toBe(403);
+
+    const upgradePermissionRes = await jsonRequest(app, `/drive/v3/files/${uploaded.id}/permissions`, {
+      method: "POST",
+      body: { type: "user", role: "writer", emailAddress: "consumer@gmail.com" },
+    });
+    expect(upgradePermissionRes.status).toBe(200);
+    expect(await upgradePermissionRes.json()).toMatchObject({ id: permission.id, role: "writer" });
+    const writerUpdateRes = await app.request(`${base}/drive/v3/files/${uploaded.id}`, {
+      method: "PATCH",
+      headers: { Authorization: "Bearer consumer-token", "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Consumer can edit" }),
+    });
+    expect(writerUpdateRes.status).toBe(200);
+
     const removePermissionRes = await app.request(
       `${base}/drive/v3/files/${uploaded.id}/permissions/${permission.id}`,
       { method: "DELETE", headers: authHeaders() },
@@ -1400,6 +1465,79 @@ describe("Google plugin integration", () => {
       headers: authHeaders(),
     });
     expect(deletedRes.status).toBe(404);
+  });
+
+  it("does not create an orphan Drive permission when deletion wins the race", async () => {
+    const { app: isolatedApp, store } = createTestApp();
+    const createRes = await jsonRequest(isolatedApp, "/drive/v3/files", {
+      method: "POST",
+      body: { name: "Ephemeral", mimeType: "text/plain" },
+    });
+    const created = (await createRes.json()) as { id: string };
+
+    const pendingShare = jsonRequest(isolatedApp, `/drive/v3/files/${created.id}/permissions`, {
+      method: "POST",
+      body: { type: "user", role: "reader", emailAddress: "consumer@gmail.com" },
+    });
+    const deleteRes = await isolatedApp.request(`${base}/drive/v3/files/${created.id}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    const shareRes = await pendingShare;
+
+    expect(deleteRes.status).toBe(204);
+    expect(shareRes.status).toBe(404);
+    expect(
+      getGoogleStore(store)
+        .drivePermissions.all()
+        .filter((permission) => permission.file_google_id === created.id),
+    ).toEqual([]);
+  });
+
+  it("deletes native Drive backing records and active permissions", async () => {
+    const { app: isolatedApp, store } = createTestApp();
+    const sheetShareRes = await jsonRequest(isolatedApp, "/drive/v3/files/sheet_tracker/permissions", {
+      method: "POST",
+      body: { type: "user", role: "reader", emailAddress: "reviewer@example.com" },
+    });
+    expect(sheetShareRes.status).toBe(200);
+
+    for (const fileId of ["doc_runbook", "sheet_tracker"]) {
+      const deleteRes = await isolatedApp.request(`${base}/drive/v3/files/${fileId}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      expect(deleteRes.status).toBe(204);
+    }
+
+    const documentRes = await isolatedApp.request(`${base}/v1/documents/doc_runbook`, { headers: authHeaders() });
+    const spreadsheetRes = await isolatedApp.request(`${base}/v4/spreadsheets/sheet_tracker`, {
+      headers: authHeaders(),
+    });
+    expect(documentRes.status).toBe(404);
+    expect(spreadsheetRes.status).toBe(404);
+
+    const googleStore = getGoogleStore(store);
+    expect(googleStore.documents.findOneBy("google_id", "doc_runbook")).toBeUndefined();
+    expect(googleStore.spreadsheets.findOneBy("google_id", "sheet_tracker")).toBeUndefined();
+    expect(
+      googleStore.drivePermissions
+        .all()
+        .filter(
+          (permission) => permission.file_google_id === "doc_runbook" || permission.file_google_id === "sheet_tracker",
+        ),
+    ).toEqual([]);
+  });
+
+  it("stores one shared Drive record with all members", () => {
+    const { store } = createTestApp();
+    expect(getGoogleStore(store).sharedDrives.all()).toMatchObject([
+      {
+        google_id: "shared_design",
+        name: "Design Team",
+        member_emails: ["testuser@example.com", "consumer@gmail.com"],
+      },
+    ]);
   });
 
   it("creates, edits, and reads Google Docs while exposing them through Drive", async () => {
@@ -1535,6 +1673,34 @@ describe("Google plugin integration", () => {
   });
 
   it("reads seeded Sheets and supports value writes, appends, and sheet renames", async () => {
+    const specialCellsRes = await jsonRequest(app, "/v4/spreadsheets/sheet_tracker/values/Bugs!A1:D1", {
+      method: "PUT",
+      body: { values: [["a,b", 'say "hi"', "line\nbreak", null]] },
+    });
+    expect(specialCellsRes.status).toBe(200);
+    const escapedExportRes = await app.request(
+      `${base}/drive/v3/files/sheet_tracker/export?mimeType=${encodeURIComponent("text/csv")}`,
+      { headers: authHeaders() },
+    );
+    expect(escapedExportRes.status).toBe(200);
+    expect(await escapedExportRes.text()).toBe('"a,b","say ""hi""","line\nbreak",\nBUG-1,Open');
+
+    const clearSeededCellsRes = await jsonRequest(app, "/v4/spreadsheets/sheet_tracker/values/Bugs!A1:D2:clear", {
+      method: "POST",
+      body: {},
+    });
+    expect(clearSeededCellsRes.status).toBe(200);
+    const resetSeededCellsRes = await jsonRequest(app, "/v4/spreadsheets/sheet_tracker/values/Bugs!A1:B2", {
+      method: "PUT",
+      body: {
+        values: [
+          ["ID", "Status"],
+          ["BUG-1", "Open"],
+        ],
+      },
+    });
+    expect(resetSeededCellsRes.status).toBe(200);
+
     const exportRes = await app.request(
       `${base}/drive/v3/files/sheet_tracker/export?mimeType=${encodeURIComponent("text/csv")}`,
       { headers: authHeaders() },

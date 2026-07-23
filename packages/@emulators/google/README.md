@@ -169,8 +169,8 @@ google:
       drive_id: shared_design
   shared_drives:
     - id: shared_design
-      user_email: testuser@example.com
       name: Design Team
+      member_emails: [testuser@example.com, reviewer@example.com]
   drive_permissions:
     - id: perm_reviewer
       user_email: testuser@example.com
